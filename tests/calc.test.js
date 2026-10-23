@@ -141,7 +141,7 @@ test('All financial metrics in computeAll match independent hand calculations', 
   const m = core.computeAll(s, '2026-10-23');
 
   // TW stocks:
-  // 0050: 6000 * 195 = 1,170,000 (cost 6000 * 150 = 900,000, lev 1 -> exp 1,170,000, pledged = true, irr = 10%)
+  // 0050: 6000 * 195 = 1,170,000 (cost 6000 * 150 = 900,000, lev 1 -> exp 1,170,000, pledged = true, irr = 11.8%)
   // 00631L: 20000 * 23 = 460,000 (cost 20000 * 18 = 360,000, lev 2 -> exp 920,000, pledged = false, irr = 18%)
   near(m.twMV, 1630000, 1e-6, 'twMV');
   near(m.twCost, 1260000, 1e-6, 'twCost');
@@ -149,15 +149,16 @@ test('All financial metrics in computeAll match independent hand calculations', 
   near(m.twExp, 2090000, 1e-6, 'twExp');
 
   // US stocks (fx = 32):
-  // VOO: 40 * 540 = 21,600 USD = 691,200 TWD (cost 40 * 450 = 18,000 USD = 576,000 TWD, ret = +20%, lev 1)
-  near(m.usMV, 691200, 1e-6, 'usMV');
-  near(m.usCost, 576000, 1e-6, 'usCost');
-  near(m.usRet, 0.20, 1e-9, 'usRet');
-  near(m.usExp, 691200, 1e-6, 'usExp');
+  // VOO: 40 * 540 = 21,600 USD = 691,200 TWD (cost 40 * 450 = 18,000 USD = 576,000 TWD, lev 1, irr = 14.6%)
+  // QQQ: 20 * 480 = 9,600 USD = 307,200 TWD (cost 20 * 400 = 8,000 USD = 256,000 TWD, lev 1, irr = 14.2%)
+  near(m.usMV, 691200 + 307200, 1e-6, 'usMV = 998,400');
+  near(m.usCost, 576000 + 256000, 1e-6, 'usCost = 832,000');
+  near(m.usRet, 0.20, 1e-9, 'usRet = +20%');
+  near(m.usExp, 998400, 1e-6, 'usExp');
 
   // Cash: 300,000 + 2,000 * 32 = 364,000
   near(m.cash, 364000, 1e-6, 'cash');
-  near(m.totalAssets, 1630000 + 691200 + 364000, 1e-6, 'totalAssets = 2,685,200');
+  near(m.totalAssets, 1630000 + 998400 + 364000, 1e-6, 'totalAssets = 2,992,400');
 
   // Loans:
   // Loan 1: 1,000,000 @ 3%, 84m, paid 12 -> bal = 869,957.69..., pmt = 13,213.30
@@ -169,7 +170,7 @@ test('All financial metrics in computeAll match independent hand calculations', 
   near(m.netWorth, m.totalAssets - m.debt, 1e-4, 'netWorth');
 
   // Exposure & Leverage
-  near(m.exposure, 2090000 + 691200, 1e-6, 'total exposure = 2,781,200');
+  near(m.exposure, 2090000 + 998400, 1e-6, 'total exposure = 3,088,400');
   near(m.leverage, m.exposure / m.netWorth, 1e-9, 'leverage');
   near(m.debtRatio, m.debt / m.totalAssets, 1e-9, 'debtRatio');
 
@@ -207,8 +208,8 @@ test('Weighted official IRR and 10/20/30-year projections (nominal & real)', () 
   const s = core.defaultState();
   const m = core.computeAll(s, '2026-10-23');
 
-  // Expected weighted IRR = (1,170,000*0.10 + 460,000*0.18 + 691,200*0.10 + 364,000*0.01) / 2,685,200
-  const expectedIrr = (1170000 * 0.10 + 460000 * 0.18 + 691200 * 0.10 + 364000 * 0.01) / 2685200;
+  // Expected weighted IRR = (1,170,000*0.118 + 460,000*0.18 + 691,200*0.146 + 307,200*0.142 + 364,000*0.01) / 2,992,400
+  const expectedIrr = (1170000 * 0.118 + 460000 * 0.18 + 691200 * 0.146 + 307200 * 0.142 + 364000 * 0.01) / 2992400;
   near(m.weightedIrr, expectedIrr, 1e-9, 'weightedIrr');
 
   const pNom = core.project({
@@ -340,23 +341,28 @@ test('UI script initializes and renders all 15 metric cards, tables, and SVG cha
   // Verify 15 metric cards rendered and populated
   assert(elements.metrics.innerHTML.includes('id="m-lev"'), 'Leverage card rendered');
   assert(elements.metrics.innerHTML.includes('id="m-xirr"'), 'XIRR card rendered');
-  assert(elements.dcaTable.innerHTML.includes('0050參考值'), 'DCA table rendered with 0050 reference placeholder');
+  assert(elements.dcaTable.innerHTML.includes('0050') && elements.dcaTable.innerHTML.includes('VOO') && elements.dcaTable.innerHTML.includes('QQQ'), 'DCA table rendered with pinned 0050, VOO, QQQ');
+  assert(!elements.dcaTable.innerHTML.includes('ref-tag'), 'DCA table must not contain misaligned ref-tag subtext below inputs');
   assert(elements.projChart.innerHTML.includes('<svg'), 'Projection SVG chart rendered');
   assert(elements.histChart.innerHTML.includes('<svg'), 'History SVG chart rendered');
   assert(elements.projTable.innerHTML.includes('第 10 年') && elements.projTable.innerHTML.includes('第 20 年') && elements.projTable.innerHTML.includes('第 30 年'), 'Projection 10/20/30yr rows rendered');
   assert(storage['finTracker.state'], 'State saved to localStorage');
 });
 
-// 8. v2 DCA Plans (TW & US Sub-brokerage), Fubon Fee Model, 54C 8.5% Tax Credit, and 2nd-Gen NHI (2.11%)
-test('v2 DCA plans, 0050 reference IRR default, Fubon TW/US DCA fees, 54C 8.5% credit, and 2.11% NHI supplementary tax', () => {
-  assert.strictEqual(core.APP_VERSION, 'v2', 'APP_VERSION must be v2');
+// 8. DCA Plans (TW & US Sub-brokerage), Fubon Fee Model, 54C 8.5% Tax Credit, and 2nd-Gen NHI (2.11%)
+test('DCA plans, 0050/VOO/QQQ official IRR defaults, Fubon TW/US DCA fees, 54C 8.5% credit, and 2.11% NHI supplementary tax', () => {
+  assert.strictEqual(core.APP_VERSION, 'v3', 'APP_VERSION must be v3');
   assert.strictEqual(core.REF_0050_IRR, 11.8, '0050 reference official CAGR is 11.8%');
+  assert.strictEqual(core.REF_VOO_IRR, 14.6, 'VOO reference official CAGR is 14.6%');
+  assert.strictEqual(core.REF_QQQ_IRR, 14.2, 'QQQ reference official CAGR is 14.2%');
   assert.strictEqual(core.REF_0050_YIELD, 3.5, '0050 reference dividend yield is 3.5%');
   assert.strictEqual(core.REF_0050_54C, 60, '0050 reference 54C ratio is 60%');
 
-  // 8.1 Effective IRR uses 0050 reference (11.8%) when TW plan officialIrr is 0 / empty
+  // 8.1 Effective IRR uses 0050 (11.8%), VOO (14.6%), QQQ (14.2%) reference when officialIrr is 0 / empty
   const twPlanDefault = { market: 'TW', symbol: '0050', monthlyAmount: 14000, officialIrr: 0, dividendYield: 3.5, domesticDividendRatio: 60 };
   near(core.dcaEffectiveIrr(twPlanDefault), 11.8, 1e-9, 'TW DCA with 0 officialIrr defaults to 0050 reference 11.8%');
+  near(core.dcaEffectiveIrr({ market: 'US', symbol: 'VOO', officialIrr: 0 }), 14.6, 1e-9, 'VOO DCA with 0 officialIrr defaults to 14.6%');
+  near(core.dcaEffectiveIrr({ market: 'US', symbol: 'QQQ', officialIrr: 0 }), 14.2, 1e-9, 'QQQ DCA with 0 officialIrr defaults to 14.2%');
   const twPlanCustom = { market: 'TW', symbol: '00631L', monthlyAmount: 10000, officialIrr: 18, dividendYield: 0, domesticDividendRatio: 0 };
   near(core.dcaEffectiveIrr(twPlanCustom), 18, 1e-9, 'TW DCA with custom officialIrr uses custom value');
 
@@ -366,7 +372,7 @@ test('v2 DCA plans, 0050 reference IRR default, Fubon TW/US DCA fees, 54C 8.5% c
   near(feeTw14k.feeTwd, 1, 1e-9, 'Fubon TW DCA 14,000 TWD fee is 1 TWD');
   near(feeTw14k.netTwd, 13999, 1e-9, 'Fubon TW DCA 14,000 TWD net is 13,999 TWD');
 
-  // TW DCA: 50,000 TWD at 1折 -> round(50000 * 0.001425 * 0.1) = round(7.125) = 7 TWD
+  // TW DCA: 50,000 TWD at 1折 -> floor(50000 * 0.001425 * 0.1) = floor(7.125) = 7 TWD
   const feeTw50k = core.calcFubonDcaFee({ market: 'TW', monthlyAmount: 50000 }, 32, { fubonTwDiscount: 1, fubonTwMinFee: 1 });
   near(feeTw50k.feeTwd, 7, 1e-9, 'Fubon TW DCA 50,000 TWD fee is 7 TWD');
   near(feeTw50k.netTwd, 49993, 1e-9, 'Fubon TW DCA 50,000 TWD net is 49,993 TWD');
@@ -379,8 +385,6 @@ test('v2 DCA plans, 0050 reference IRR default, Fubon TW/US DCA fees, 54C 8.5% c
   near(feeUs300.netTwd, 9590.4, 1e-9, 'Fubon US DCA 300 USD net TWD is 9,590.4');
 
   // 8.3 Taiwan Dividend 54C + 2nd-Gen NHI (2.11% when single 54C payout >= 20,000) + 54C 8.5% tax credit (cap 80,000)
-  // Case A: TW balance = 1,500,000 -> div = 52,500 -> 54C (60%) = 31,500 -> semi-annual (freq=2) single 54C = 15,750 (< 20,000) -> NHI = 0
-  // 54C credit = 31,500 * 8.5% = 2,677.5
   const taxBelow = core.calcTwDividendTaxAndNhi(
     [{ balance: 1500000, dividendYield: 3.5, domesticDividendRatio: 60 }],
     { twPayoutFreq: 2, applyNhi: true, apply54cCredit: true },
@@ -391,8 +395,6 @@ test('v2 DCA plans, 0050 reference IRR default, Fubon TW/US DCA fees, 54C 8.5% c
   near(taxBelow.nhi, 0, 1e-6, 'Below 20,000 per payout -> 0 NHI');
   near(taxBelow.credit54c, 31500 * 0.085, 1e-6, '54C 8.5% credit on 31,500');
 
-  // Case B: TW balance = 2,000,000 -> div = 70,000 -> 54C (60%) = 42,000 -> semi-annual single 54C = 21,000 (>= 20,000)
-  // NHI = 42,000 * 2.11% = 886.2; 54C credit = 42,000 * 8.5% = 3,570
   const taxAbove = core.calcTwDividendTaxAndNhi(
     [{ balance: 2000000, dividendYield: 3.5, domesticDividendRatio: 60 }],
     { twPayoutFreq: 2, applyNhi: true, apply54cCredit: true },
@@ -403,8 +405,6 @@ test('v2 DCA plans, 0050 reference IRR default, Fubon TW/US DCA fees, 54C 8.5% c
   near(taxAbove.credit54c, 42000 * 0.085, 1e-6, '54C 8.5% credit on 42,000');
   near(taxAbove.netTaxImpact, 42000 * (0.085 - 0.0211), 1e-6, 'Net tax impact = +8.5% credit - 2.11% NHI');
 
-  // Case C: High TW balance = 60,000,000 -> div = 2,100,000 -> 54C (60%) = 1,260,000
-  // 54C credit = min(80,000, 1,260,000 * 8.5% = 107,100) = 80,000 (capped!)
   const taxCap = core.calcTwDividendTaxAndNhi(
     [{ balance: 60000000, dividendYield: 3.5, domesticDividendRatio: 60 }],
     { twPayoutFreq: 2, applyNhi: true, apply54cCredit: true },
@@ -412,22 +412,109 @@ test('v2 DCA plans, 0050 reference IRR default, Fubon TW/US DCA fees, 54C 8.5% c
   );
   near(taxCap.credit54c, 80000, 1e-6, '54C 8.5% tax credit capped at 80,000 TWD');
 
-  // 8.4 Full 30-year v2 projection with TW + US DCA plans
+  // 8.4 Full 30-year projection with pinned 0050 (14,000 TWD), VOO (300 USD), QQQ (200 USD)
   const s = core.defaultState();
   const m = core.computeAll(s, '2026-10-23');
-  const pV2 = core.project({
+  const pV3 = core.project({
     assets: m.totalAssets, loans: s.loans, today: '2026-10-23', rate: m.weightedIrr,
     inflation: 0.02, real: false, years: 30,
-    fx: s.fx.usdTwd, twMV: m.twMV, usMV: m.usMV, cash: m.cash,
+    fx: s.fx.usdTwd, twMV: m.twMV, usMV: m.usMV, twCost: m.twCost, usCost: m.usCost, cash: m.cash,
     twHoldings: m.tw, usHoldings: m.us, projection: s.projection
   });
-  near(pV2.dcaMonthlyGrossTwd, 14000 + 300 * 32, 1e-6, 'Monthly DCA gross = 23,600 TWD');
-  near(pV2.dcaMonthlyFeeTwd, 1 + 9.6, 1e-6, 'Monthly DCA fee = 10.6 TWD');
-  near(pV2.dcaMonthlyNetTwd, 23600 - 10.6, 1e-6, 'Monthly DCA net = 23,589.4 TWD');
-  near(pV2.rows[10].cumFee, 10.6 * 12 * 10, 1e-4, '10-year cumulative Fubon DCA fee');
-  assert(pV2.rows[10].annualNhi > 0, 'By Year 10, TW portfolio triggers 2.11% 2nd-gen NHI supplementary premium');
-  assert(pV2.rows[10].annual54cCredit > 0, 'By Year 10, TW portfolio receives 54C 8.5% tax credit');
-  near(pV2.rows[30].annual54cCredit, 80000, 1e-4, 'By Year 30, 54C tax credit reaches the 80,000 TWD legal cap');
+  near(pV3.dcaMonthlyGrossTwd, 14000 + (300 + 200) * 32, 1e-6, 'Monthly DCA gross = 30,000 TWD');
+  near(pV3.dcaMonthlyFeeTwd, 1 + 9.6 + 6.4, 1e-6, 'Monthly DCA fee = 17.0 TWD');
+  near(pV3.dcaMonthlyNetTwd, 30000 - 17, 1e-6, 'Monthly DCA net = 29,983 TWD');
+  near(pV3.rows[10].cumFee, 17 * 12 * 10, 1e-4, '10-year cumulative Fubon DCA fee');
+  assert(pV3.rows[10].annualNhi > 0, 'By Year 10, TW portfolio triggers 2.11% 2nd-gen NHI supplementary premium');
+  assert(pV3.rows[10].annual54cCredit > 0, 'By Year 10, TW portfolio receives 54C 8.5% tax credit');
+  near(pV3.rows[30].annual54cCredit, 80000, 1e-4, 'By Year 30, 54C tax credit reaches the 80,000 TWD legal cap');
+});
+
+// 9. v3 Requirements: Pinned 0050/VOO/QQQ with pre-filled official IRR, live TW/US holding updates to projection, cashflow section removed, history at bottom, section collapse buttons
+test('v3 pinned 0050/VOO/QQQ DCA rows, TW/US holding updates immediately update projection & returns, history at bottom, cashflow removed, and collapsible sections', () => {
+  // 9.1 Pinned DCA rows in defaultState and migrated v2 state
+  const s = core.defaultState();
+  const syms = s.projection.dcaPlans.map(p => p.symbol);
+  assert.strictEqual(syms.slice(0, 3).join(','), '0050,VOO,QQQ', '0050, VOO, QQQ must be pinned first');
+  assert(s.projection.dcaPlans.slice(0, 3).every(p => p.pinned === true), 'All 3 must have pinned: true');
+  near(s.projection.dcaPlans[0].officialIrr, 11.8, 1e-9, '0050 pre-filled official IRR = 11.8%');
+  near(s.projection.dcaPlans[1].officialIrr, 14.6, 1e-9, 'VOO pre-filled official IRR = 14.6%');
+  near(s.projection.dcaPlans[2].officialIrr, 14.2, 1e-9, 'QQQ pre-filled official IRR = 14.2%');
+
+  // Migrating from v2 state missing QQQ and having 0/10 IRR upgrades to pinned 0050 (11.8), VOO (14.6), QQQ (14.2)
+  const v2Raw = {
+    schemaVersion: 2,
+    projection: {
+      dcaPlans: [
+        { market: 'TW', symbol: '0050', monthlyAmount: 15000, officialIrr: 0 },
+        { market: 'US', symbol: 'VOO', monthlyAmount: 400, officialIrr: 10 }
+      ]
+    }
+  };
+  const mig = core.normalizeState(v2Raw);
+  assert.strictEqual(mig.projection.dcaPlans.length, 3, 'Missing QQQ added automatically');
+  near(mig.projection.dcaPlans[0].officialIrr, 11.8, 1e-9, 'Migrated 0050 gets 11.8%');
+  near(mig.projection.dcaPlans[1].officialIrr, 14.6, 1e-9, 'Migrated VOO gets 14.6%');
+  near(mig.projection.dcaPlans[2].officialIrr, 14.2, 1e-9, 'Migrated QQQ gets 14.2%');
+  assert.strictEqual(mig.projection.dcaPlans[2].pinned, true, 'QQQ is pinned');
+
+  // 9.2 Updating TW or US holdings (shares, avg, price) immediately updates projection & CAGR/XIRR
+  const mBefore = core.computeAll(s, '2026-10-23');
+  const pBefore = core.project({
+    assets: mBefore.totalAssets, loans: s.loans, today: '2026-10-23', rate: mBefore.weightedIrr,
+    inflation: 0.02, real: false, years: 30,
+    fx: s.fx.usdTwd, twMV: mBefore.twMV, usMV: mBefore.usMV, twCost: mBefore.twCost, usCost: mBefore.usCost, cash: mBefore.cash,
+    twHoldings: mBefore.tw, usHoldings: mBefore.us, projection: s.projection
+  });
+
+  // Update TW shares (large lump-sum investment: 0050 shares 6000 -> 12000)
+  s.tw[0].shares = 12000;
+  const mAfterTw = core.computeAll(s, '2026-10-23');
+  const pAfterTw = core.project({
+    assets: mAfterTw.totalAssets, loans: s.loans, today: '2026-10-23', rate: mAfterTw.weightedIrr,
+    inflation: 0.02, real: false, years: 30,
+    fx: s.fx.usdTwd, twMV: mAfterTw.twMV, usMV: mAfterTw.usMV, twCost: mAfterTw.twCost, usCost: mAfterTw.usCost, cash: mAfterTw.cash,
+    twHoldings: mAfterTw.tw, usHoldings: mAfterTw.us, projection: s.projection
+  });
+  assert(pAfterTw.rows[0].assets > pBefore.rows[0].assets, 'TW shares increase immediately increases Year 0 projected assets');
+  assert(pAfterTw.rows[30].netWorth > pBefore.rows[30].netWorth, 'TW shares increase immediately increases Year 30 projected net worth');
+
+  // Update US price (VOO price 540 -> 600)
+  s.us[0].price = 600;
+  const mAfterUs = core.computeAll(s, '2026-10-23');
+  const pAfterUs = core.project({
+    assets: mAfterUs.totalAssets, loans: s.loans, today: '2026-10-23', rate: mAfterUs.weightedIrr,
+    inflation: 0.02, real: false, years: 30,
+    fx: s.fx.usdTwd, twMV: mAfterUs.twMV, usMV: mAfterUs.usMV, twCost: mAfterUs.twCost, usCost: mAfterUs.usCost, cash: mAfterUs.cash,
+    twHoldings: mAfterUs.tw, usHoldings: mAfterUs.us, projection: s.projection
+  });
+  assert(pAfterUs.rows[30].netWorth > pAfterTw.rows[30].netWorth, 'US price increase immediately increases Year 30 projected net worth');
+
+  // Update avg cost (0050 avg 150 -> 180) updates initCost, totalCost, CAGR, and XIRR
+  const cagrBeforeAvg = mAfterUs.cagr.cagr;
+  s.tw[0].avg = 180;
+  const mAfterAvg = core.computeAll(s, '2026-10-23');
+  const pAfterAvg = core.project({
+    assets: mAfterAvg.totalAssets, loans: s.loans, today: '2026-10-23', rate: mAfterAvg.weightedIrr,
+    inflation: 0.02, real: false, years: 30,
+    fx: s.fx.usdTwd, twMV: mAfterAvg.twMV, usMV: mAfterAvg.usMV, twCost: mAfterAvg.twCost, usCost: mAfterAvg.usCost, cash: mAfterAvg.cash,
+    twHoldings: mAfterAvg.tw, usHoldings: mAfterAvg.us, projection: s.projection
+  });
+  assert(pAfterAvg.initCost > pAfterUs.initCost, 'Updating avg cost immediately updates projection initCost');
+  assert(mAfterAvg.cagr.cagr < cagrBeforeAvg, 'Higher avg cost reduces CAGR');
+
+  // When a new holding has price = 0 and avg > 0, holdingCalc falls back to avg so projection immediately updates
+  s.tw.push({ symbol: '2330', name: '台積電', shares: 1000, avg: 1000, price: 0, lev: 1, pledged: false, irr: 15 });
+  const mNewStock = core.computeAll(s, '2026-10-23');
+  near(mNewStock.twMV, mAfterAvg.twMV + 1000000, 1e-6, 'Holding with price=0 uses avg*shares for market value');
+
+  // 9.3 HTML structure checks: no #sec-flows, #sec-history is last section, every section has toggle-panel button
+  assert(!html.includes('id="sec-flows"'), 'Cashflow section (#sec-flows) must be removed');
+  assert(!html.includes('id="flowTable"'), 'Cashflow table (#flowTable) must be removed');
+  const sectionIds = [...html.matchAll(/<section id="([^"]+)"/g)].map(m => m[1]);
+  assert.strictEqual(sectionIds[sectionIds.length - 1], 'sec-history', 'History section (#sec-history) must be at the very bottom');
+  const toggleBtns = [...html.matchAll(/data-act="toggle-panel"\s+data-panel="([^"]+)"/g)].map(m => m[1]);
+  assert.deepStrictEqual(toggleBtns, sectionIds, 'Every section must have a collapse/expand toggle button');
 });
 
 console.log('\nAll ' + passed + ' test suites passed!');
