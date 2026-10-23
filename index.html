@@ -373,6 +373,17 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; padding:
     </div>
   </section>
 
+  <section id="sec-history" class="card panel">
+    <div class="card-head panel-head">
+      <h2>歷史紀錄</h2>
+      <button type="button" class="btn small toggle-panel-btn" data-act="toggle-panel" data-panel="sec-history" aria-expanded="true">收合</button>
+    </div>
+    <div class="panel-body" id="body-sec-history">
+      <div class="chart" id="histChart"></div>
+      <div class="table-wrap"><table id="histTable"></table></div>
+    </div>
+  </section>
+
   <section id="sec-data" class="card panel">
     <div class="card-head panel-head">
       <h2>資料管理</h2>
@@ -388,17 +399,6 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; padding:
       </div>
     </div>
   </section>
-
-  <section id="sec-history" class="card panel">
-    <div class="card-head panel-head">
-      <h2>歷史紀錄</h2>
-      <button type="button" class="btn small toggle-panel-btn" data-act="toggle-panel" data-panel="sec-history" aria-expanded="true">收合</button>
-    </div>
-    <div class="panel-body" id="body-sec-history">
-      <div class="chart" id="histChart"></div>
-      <div class="table-wrap"><table id="histTable"></table></div>
-    </div>
-  </section>
 </main>
 
 <footer class="foot" id="footer"></footer>
@@ -406,7 +406,7 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; padding:
 
 <script id="core">
 /* ==== [MODULE: CONFIG] ==== */
-const APP_VERSION = 'v4';
+const APP_VERSION = 'v5';
 const SCHEMA_VERSION = 4;
 const STORAGE_KEY = 'finTracker.state';
 const THEME_KEY = 'finTracker.theme';

@@ -351,7 +351,7 @@ test('UI script initializes and renders all 15 metric cards, tables, and SVG cha
 
 // 8. DCA Plans (TW & US Sub-brokerage), Fubon Fee Model, 54C 8.5% Tax Credit, and 2nd-Gen NHI (2.11%)
 test('DCA plans, 0050/VOO/QQQ official IRR defaults, Fubon TW/US DCA fees, 54C 8.5% credit, and 2.11% NHI supplementary tax', () => {
-  assert.strictEqual(core.APP_VERSION, 'v4', 'APP_VERSION must be v4');
+  assert.strictEqual(core.APP_VERSION, 'v5', 'APP_VERSION must be v5');
   assert.strictEqual(core.REF_0050_IRR, 11.8, '0050 reference official CAGR is 11.8%');
   assert.strictEqual(core.REF_VOO_IRR, 14.6, 'VOO reference official CAGR is 14.6%');
   assert.strictEqual(core.REF_QQQ_IRR, 14.2, 'QQQ reference official CAGR is 14.2%');
@@ -508,11 +508,12 @@ test('v3 pinned 0050/VOO/QQQ DCA rows, TW/US holding updates immediately update 
   const mNewStock = core.computeAll(s, '2026-10-23');
   near(mNewStock.twMV, mAfterAvg.twMV + 1000000, 1e-6, 'Holding with price=0 uses avg*shares for market value');
 
-  // 9.3 HTML structure checks: no #sec-flows, #sec-history is last section, every section has toggle-panel button
+  // 9.3 HTML structure checks: no #sec-flows, #sec-history is second-to-last, #sec-data is last section, every section has toggle-panel button
   assert(!html.includes('id="sec-flows"'), 'Cashflow section (#sec-flows) must be removed');
   assert(!html.includes('id="flowTable"'), 'Cashflow table (#flowTable) must be removed');
   const sectionIds = [...html.matchAll(/<section id="([^"]+)"/g)].map(m => m[1]);
-  assert.strictEqual(sectionIds[sectionIds.length - 1], 'sec-history', 'History section (#sec-history) must be at the very bottom');
+  assert.strictEqual(sectionIds[sectionIds.length - 2], 'sec-history', 'History section (#sec-history) must be second-to-last');
+  assert.strictEqual(sectionIds[sectionIds.length - 1], 'sec-data', 'Data management section (#sec-data) must be at the very bottom');
   const toggleBtns = [...html.matchAll(/data-act="toggle-panel"\s+data-panel="([^"]+)"/g)].map(m => m[1]);
   assert.deepStrictEqual(toggleBtns, sectionIds, 'Every section must have a collapse/expand toggle button');
 });
