@@ -180,7 +180,9 @@ td input.w-date { min-width: 140px; }
 .chart-svg { display: block; touch-action: pan-y; }
 .chart-svg .grid { stroke: var(--border); stroke-width: 1; }
 .chart-svg .axis { fill: var(--muted); font-size: 11px; }
+.chart-svg .axis-sub { fill: var(--muted); font-size: 10px; }
 .chart-svg .mlabel { fill: var(--text); font-size: 11px; font-weight: 600; }
+.yr-sub { font-size: 11px; color: var(--muted); display: block; line-height: 1.2; font-weight: 400; }
 .chart-svg .hover-line { stroke: var(--muted); stroke-dasharray: 3 3; }
 .chart-tip {
   position: absolute; top: 8px; pointer-events: none; background: var(--surface); color: var(--text);
@@ -404,8 +406,8 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; padding:
 
 <script id="core">
 /* ==== [MODULE: CONFIG] ==== */
-const APP_VERSION = 'v3';
-const SCHEMA_VERSION = 3;
+const APP_VERSION = 'v4';
+const SCHEMA_VERSION = 4;
 const STORAGE_KEY = 'finTracker.state';
 const THEME_KEY = 'finTracker.theme';
 const LEGACY_V0_KEY = 'tracker_v2_data';
@@ -463,6 +465,12 @@ function toDateStr(ms) {
 function todayStr(d) {
   d = d || new Date();
   return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+}
+function projYearYm(today, y) {
+  const m = /^(\d{4})-(\d{1,2})/.exec(String(today || todayStr()).trim());
+  const yr0 = m ? +m[1] : new Date().getFullYear();
+  const mo0 = m ? +m[2] : (new Date().getMonth() + 1);
+  return (yr0 + Math.round(num(y))) + '/' + pad2(mo0);
 }
 function fmtNum(n, d) {
   d = d == null ? 0 : d;
@@ -531,14 +539,14 @@ function ensurePinnedDcaPlans(plans, isMigration) {
   });
   return pinnedOut.concat(customOut);
 }
-function loanTemplate() { return { name: '', type: '信貸', principal: 0, rate: 0, term: 0, paid: 0, startDate: '' }; }
+function loanTemplate() { return { name: '', type: '信貸', principal: 0, rate: 0, term: 0, paid: 0, paidAsOf: todayStr(), startDate: '' }; }
 function flowTemplate() { return { date: '', type: 'in', amount: 0 }; }
 function snapshotTemplate() { return { date: '', tw: 0, us: 0, cash: 0, debt: 0, netWorth: 0, totalAssets: 0 }; }
 function emptyState() {
   return {
     schemaVersion: SCHEMA_VERSION,
     fx: { usdTwd: 32 },
-    cash: { twd: 0, usd: 0, unusedCredit: 0, monthlyIncome: 0, monthlyExpense: 0, investYears: 3 },
+    cash: { twd: 0, usd: 0, unusedCredit: 0, monthlyIncome: 0, monthlyExpense: 0, investYears: 3, investYearsAsOf: todayStr() },
     tw: [], us: [], loans: [], cashflows: [], snapshots: [],
     targets: {
       leverage: 1.5, levBand: 0.1,
@@ -559,7 +567,7 @@ function emptyState() {
 function defaultState() {
   const s = emptyState();
   s.fx.usdTwd = 32;
-  s.cash = { twd: 300000, usd: 2000, unusedCredit: 500000, monthlyIncome: 80000, monthlyExpense: 35000, investYears: 3 };
+  s.cash = { twd: 300000, usd: 2000, unusedCredit: 500000, monthlyIncome: 80000, monthlyExpense: 35000, investYears: 3, investYearsAsOf: todayStr() };
   s.tw = [
     { symbol: '0050', name: '元大台灣50', shares: 6000, avg: 150, price: 195, lev: 1, pledged: true, irr: REF_0050_IRR },
     { symbol: '00631L', name: '元大台灣50正2', shares: 20000, avg: 18, price: 23, lev: 2, pledged: false, irr: 18 }
@@ -569,8 +577,8 @@ function defaultState() {
     { symbol: 'QQQ', name: 'Invesco QQQ', shares: 20, avg: 400, price: 480, lev: 1, pledged: false, irr: REF_QQQ_IRR }
   ];
   s.loans = [
-    { name: '信貸', type: '信貸', principal: 1000000, rate: 3, term: 84, paid: 12, startDate: '' },
-    { name: '股票質押', type: '質押', principal: 300000, rate: 2.5, term: 0, paid: 0, startDate: '' }
+    { name: '信貸', type: '信貸', principal: 1000000, rate: 3, term: 84, paid: 12, paidAsOf: todayStr(), startDate: '' },
+    { name: '股票質押', type: '質押', principal: 300000, rate: 2.5, term: 0, paid: 0, paidAsOf: todayStr(), startDate: '' }
   ];
   s.cashflows = [];
   s.snapshots = [
@@ -615,6 +623,7 @@ function normalizeState(raw) {
   s.cashflows = rows(raw.cashflows, flowTemplate, d.cashflows);
   s.snapshots = rows(raw.snapshots, snapshotTemplate, d.snapshots);
   if (!(num(s.cash.investYears) > 0)) s.cash.investYears = 3;
+  if (parseDate(s.cash.investYearsAsOf) == null) s.cash.investYearsAsOf = todayStr();
   const rawProj = isObj(raw.projection) ? raw.projection : {};
   if (Array.isArray(rawProj.dcaPlans)) {
     const parsedPlans = rawProj.dcaPlans.filter(isObj).map(function (r) {
@@ -631,7 +640,10 @@ function normalizeState(raw) {
     s.projection.dcaPlans = ensurePinnedDcaPlans(s.projection.dcaPlans, isOldSchema);
   }
   s.projection.dcaPlans.forEach(function (p) { if (p.market !== 'US') p.market = 'TW'; });
-  s.loans.forEach(function (l) { if (LOAN_TYPES.indexOf(l.type) < 0) l.type = '其他'; });
+  s.loans.forEach(function (l) {
+    if (LOAN_TYPES.indexOf(l.type) < 0) l.type = '其他';
+    if (parseDate(l.paidAsOf) == null) l.paidAsOf = todayStr();
+  });
   s.cashflows.forEach(function (c) { if (c.type !== 'out') c.type = 'in'; });
   s.snapshots = s.snapshots
     .filter(function (x) { return parseDate(x.date) != null; })
@@ -707,8 +719,16 @@ function monthsElapsed(startStr, endStr) {
   return Math.max(0, m);
 }
 function loanPaidCount(loan, today) {
+  today = today || todayStr();
   const n = Math.round(num(loan.term));
-  let k = parseDate(loan.startDate) != null ? monthsElapsed(loan.startDate, today) : Math.round(num(loan.paid));
+  let k;
+  if (parseDate(loan.startDate) != null) {
+    k = monthsElapsed(loan.startDate, today);
+  } else {
+    const basePaid = Math.round(num(loan.paid));
+    const elapsed = parseDate(loan.paidAsOf) != null ? monthsElapsed(loan.paidAsOf, today) : 0;
+    k = basePaid + elapsed;
+  }
   k = Math.max(0, k);
   return n > 0 ? Math.min(k, n) : k;
 }
@@ -854,6 +874,17 @@ function upperStatus(v, limit) {
   if (v > 0.9 * limit) return 'warn';
   return 'ok';
 }
+function effectiveInvestYears(cashObj, today) {
+  today = today || todayStr();
+  const baseYears = num(cashObj && cashObj.investYears) > 0 ? num(cashObj.investYears) : 3;
+  const a = cashObj ? parseDate(cashObj.investYearsAsOf) : null;
+  const b = parseDate(today);
+  if (a != null && b != null && b > a) {
+    const elapsedDays = (b - a) / DAY_MS;
+    return Math.max(0.1, baseYears + elapsedDays / 365.25);
+  }
+  return Math.max(0.1, baseYears);
+}
 function computeAll(s, today) {
   today = today || todayStr();
   const todayMs = parseDate(today);
@@ -913,7 +944,7 @@ function computeAll(s, today) {
 
   m.totalCost = m.twCost + m.usCost;
   m.totalPL = m.twPL + m.usPL;
-  m.investYears = Math.max(0.1, num(s.cash && s.cash.investYears) || 3);
+  m.investYears = effectiveInvestYears(s.cash, today);
   const impliedNetCost = m.netWorth - m.totalPL;
   m.netContribution = impliedNetCost > 0 ? impliedNetCost : m.totalCost;
   m.contributions = [];
@@ -1315,14 +1346,14 @@ if (typeof module !== 'undefined' && module.exports) {
     PINNED_DCA_DEFAULTS: PINNED_DCA_DEFAULTS,
     FUBON_TW_BASE_RATE: FUBON_TW_BASE_RATE, NHI_SUPP_RATE: NHI_SUPP_RATE, NHI_THRESHOLD: NHI_THRESHOLD,
     TAX_54C_CREDIT_RATE: TAX_54C_CREDIT_RATE, TAX_54C_CREDIT_CAP: TAX_54C_CREDIT_CAP,
-    num: num, parseDate: parseDate, toDateStr: toDateStr, fmtNum: fmtNum, fmtPct: fmtPct, fmtCompact: fmtCompact,
+    num: num, parseDate: parseDate, toDateStr: toDateStr, todayStr: todayStr, projYearYm: projYearYm, fmtNum: fmtNum, fmtPct: fmtPct, fmtCompact: fmtCompact,
     defaultState: defaultState, emptyState: emptyState, holdingTemplate: holdingTemplate, dcaTemplate: dcaTemplate,
     ensurePinnedDcaPlans: ensurePinnedDcaPlans,
     deepMerge: deepMerge, normalizeState: normalizeState, migrateV0: migrateV0,
     loanPayment: loanPayment, loanBalance: loanBalance, loanSummary: loanSummary, loanPaidCount: loanPaidCount,
     amortSchedule: amortSchedule, monthsElapsed: monthsElapsed,
     xirr: xirr, modifiedDietz: modifiedDietz, cagrFromCashflows: cagrFromCashflows, avgAnnualFromSnapshots: avgAnnualFromSnapshots,
-    computeAll: computeAll, weightedIrr: weightedIrr, realRate: realRate,
+    effectiveInvestYears: effectiveInvestYears, computeAll: computeAll, weightedIrr: weightedIrr, realRate: realRate,
     dcaEffectiveIrr: dcaEffectiveIrr, calcFubonDcaFee: calcFubonDcaFee, calcTwDividendTaxAndNhi: calcTwDividendTaxAndNhi,
     project: project,
     buildAdvice: buildAdvice, makeSnapshot: makeSnapshot, upsertSnapshot: upsertSnapshot
@@ -1468,6 +1499,7 @@ function renderHoldings(kind) {
   $('#' + kind + 'Table').innerHTML = h;
 }
 function renderCashForm() {
+  const effInvestYrs = Math.round(effectiveInvestYears(S.cash, todayStr()) * 100) / 100;
   $('#fxSlotUs').innerHTML = inNum('fx.usdTwd', S.fx.usdTwd, '', 'USD/TWD 匯率');
   $('#cashForm').innerHTML = [
     field('台幣現金', inNum('cash.twd', S.cash.twd)),
@@ -1476,21 +1508,23 @@ function renderCashForm() {
     field('未動用信用額度', inNum('cash.unusedCredit', S.cash.unusedCredit)),
     field('每月收入', inNum('cash.monthlyIncome', S.cash.monthlyIncome)),
     field('每月必要支出', inNum('cash.monthlyExpense', S.cash.monthlyExpense)),
-    field('投資經過年數 (年)', inNum('cash.investYears', S.cash.investYears, '', '投資經過年數', '3'))
+    field('投資經過年數 (年)', inNum('cash.investYears', effInvestYrs, '', '投資經過年數', '3'))
   ].join('');
 }
 function renderLoans() {
   const types = LOAN_TYPES.map(function (t) { return [t, t]; });
+  const nowStr = todayStr();
   let h = '';
   S.loans.forEach(function (l, i) {
     const p = 'loans.' + i + '.';
+    const effPaid = loanPaidCount(l, nowStr);
     h += '<div class="loan"><div class="form-grid">' +
       field('名稱', inText(p + 'name', l.name)) +
       field('類型', inSelect(p + 'type', l.type, types)) +
       field('原始借款金額', inNum(p + 'principal', l.principal)) +
       field('年利率 (%)', inNum(p + 'rate', l.rate)) +
       field('總期數（0 為只付息）', inNum(p + 'term', l.term)) +
-      field('已繳期數', inNum(p + 'paid', l.paid)) +
+      field('已繳期數', inNum(p + 'paid', effPaid)) +
       field('起貸日（選填）', inDate(p + 'startDate', l.startDate)) +
       '</div><div class="loan-out">' +
       '<div class="kv"><span id="loan-' + i + '-payL">每月還款</span><b id="loan-' + i + '-pay"></b></div>' +
@@ -1760,14 +1794,15 @@ function renderProjection() {
   $('#projRate').innerHTML = '現有部位加權名目年化 <b>' + fmtPct(M.weightedIrr) + '</b>，實質 <b>' + fmtPct(realRate(M.weightedIrr, infl)) +
     '</b>（通膨 ' + fmtPct(infl, 1) + '）｜每月定期定額總扣款 <b>' + fmtNum(P.dcaMonthlyGrossTwd) + '</b> 元（富邦手續費 <b>' +
     fmtNum(P.dcaMonthlyFeeTwd, 1) + '</b> 元，淨投入 <b>' + fmtNum(P.dcaMonthlyNetTwd) + '</b> 元）';
-  const yr0 = +M.today.slice(0, 4);
   const marks = [5, 10, 15, 20, 25, 30];
-  let h = '<thead><tr><th>年</th><th>西元</th><th class="r">資產</th><th class="r">負債</th><th class="r">淨值</th>' +
+  let h = '<thead><tr><th>年度</th><th class="r">資產</th><th class="r">負債</th><th class="r">淨值</th>' +
     '<th class="r">當年度 54C 股利</th><th class="r">當年度二代健保 (2.11%)</th><th class="r">當年度 54C 抵減 (8.5%)</th><th class="r">累計手續費</th></tr></thead><tbody>';
   [0].concat(marks).forEach(function (y) {
     const r = P.rows[y];
     if (!r) return;
-    h += '<tr' + (y % 10 === 0 && y > 0 ? ' class="hl"' : '') + '><td>' + (y === 0 ? '現在' : '第 ' + y + ' 年') + '</td><td>' + (yr0 + y) + '</td><td class="r">' +
+    const ym = projYearYm(M.today, y);
+    const yrCell = (y === 0 ? '現在' : '第 ' + y + ' 年') + '<sub class="yr-sub">' + esc(ym) + '</sub>';
+    h += '<tr' + (y % 10 === 0 && y > 0 ? ' class="hl"' : '') + '><td>' + yrCell + '</td><td class="r">' +
       fmtNum(r.assets) + '</td><td class="r">' + fmtNum(r.debt) + '</td><td class="r">' + fmtNum(r.netWorth) + '</td><td class="r">' +
       fmtNum(r.annual54c) + '</td><td class="r">' + (r.annualNhi > 0 ? '-' + fmtNum(r.annualNhi) : '0') + '</td><td class="r">' +
       (r.annual54cCredit > 0 ? '+' + fmtNum(r.annual54cCredit) : '0') + '</td><td class="r">' + fmtNum(r.cumFee) + '</td></tr>';
@@ -1815,7 +1850,8 @@ function lineChart(el, cfg) {
   const y0 = ticks[0], y1 = ticks[ticks.length - 1];
   const labels = ticks.map(fmtCompact);
   const padL = Math.max.apply(null, labels.map(function (l) { return l.length; })) * 7 + 12;
-  const padR = 16, padT = 18, padB = 24;
+  const hasSub = typeof cfg.xSubLabel === 'function';
+  const padR = 16, padT = 18, padB = hasSub ? 38 : 24;
   const xmin = xs[0], xmax = xs[xs.length - 1], xr = (xmax - xmin) || 1;
   const X = function (x) { return xs.length === 1 ? padL + (W - padL - padR) / 2 : padL + (x - xmin) / xr * (W - padL - padR); };
   const Y = function (v) { return padT + (1 - (v - y0) / (y1 - y0)) * (H - padT - padB); };
@@ -1834,7 +1870,14 @@ function lineChart(el, cfg) {
   }
   xt.forEach(function (x, i) {
     const anchor = xt.length > 1 && i === 0 ? 'start' : (xt.length > 1 && i === xt.length - 1 ? 'end' : 'middle');
-    svg += '<text class="axis" x="' + X(x).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="' + (xs.length === 1 ? 'middle' : anchor) + '">' + esc(cfg.xLabel(x)) + '</text>';
+    const tx = X(x).toFixed(1);
+    const anc = xs.length === 1 ? 'middle' : anchor;
+    if (hasSub) {
+      svg += '<text class="axis" x="' + tx + '" y="' + (H - 20) + '" text-anchor="' + anc + '">' + esc(cfg.xLabel(x)) +
+        '<tspan class="axis-sub" x="' + tx + '" dy="13">' + esc(cfg.xSubLabel(x)) + '</tspan></text>';
+    } else {
+      svg += '<text class="axis" x="' + tx + '" y="' + (H - 6) + '" text-anchor="' + anc + '">' + esc(cfg.xLabel(x)) + '</text>';
+    }
   });
   series.forEach(function (s) {
     const pts = s.values.map(function (v, i) { return X(xs[i]).toFixed(1) + ',' + Y(v).toFixed(1); });
@@ -1890,7 +1933,6 @@ function lineChart(el, cfg) {
   svgEl.addEventListener('pointerleave', hide);
 }
 function renderProjChart() {
-  const yr0 = +M.today.slice(0, 4);
   lineChart($('#projChart'), {
     id: 'proj',
     xs: P.rows.map(function (r) { return r.year; }),
@@ -1901,7 +1943,8 @@ function renderProjChart() {
     ],
     xTicks: [0, 5, 10, 15, 20, 25, 30],
     xLabel: function (y) { return y === 0 ? '現在' : y + '年'; },
-    tipTitle: function (y) { return (y === 0 ? '現在' : '第 ' + y + ' 年') + '（' + (yr0 + y) + '）'; },
+    xSubLabel: function (y) { return projYearYm(M.today, y); },
+    tipTitle: function (y) { return (y === 0 ? '現在' : '第 ' + y + ' 年') + '（' + projYearYm(M.today, y) + '）'; },
     markers: [{ x: 10, key: 'nw' }, { x: 20, key: 'nw' }, { x: 30, key: 'nw' }]
   });
 }
@@ -2002,6 +2045,14 @@ function onFieldInput(el) {
   else if (kind === 'bool') v = !!el.checked;
   else v = el.value;
   setPath(S, path, v);
+  if (path === 'cash.investYears') {
+    S.cash.investYearsAsOf = todayStr();
+  }
+  const loanPaidMatch = /^loans\.(\d+)\.paid$/.exec(path);
+  if (loanPaidMatch) {
+    const lIdx = +loanPaidMatch[1];
+    if (S.loans[lIdx]) S.loans[lIdx].paidAsOf = todayStr();
+  }
   const mktMatch = /^projection\.dcaPlans\.(\d+)\.market$/.exec(path);
   if (mktMatch) {
     const idx = +mktMatch[1];
@@ -2130,7 +2181,7 @@ function bindEvents() {
   buildMetricCards();
   bindEvents();
   renderAll();
-  $('#footer').textContent = '財務追蹤器 ' + APP_VERSION;
+  $('#footer').textContent = '財務追蹤器 ' + APP_VERSION + ' ｜ 基準日：' + todayStr();
 })();
 </script>
 </body>

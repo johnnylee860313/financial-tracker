@@ -351,7 +351,7 @@ test('UI script initializes and renders all 15 metric cards, tables, and SVG cha
 
 // 8. DCA Plans (TW & US Sub-brokerage), Fubon Fee Model, 54C 8.5% Tax Credit, and 2nd-Gen NHI (2.11%)
 test('DCA plans, 0050/VOO/QQQ official IRR defaults, Fubon TW/US DCA fees, 54C 8.5% credit, and 2.11% NHI supplementary tax', () => {
-  assert.strictEqual(core.APP_VERSION, 'v3', 'APP_VERSION must be v3');
+  assert.strictEqual(core.APP_VERSION, 'v4', 'APP_VERSION must be v4');
   assert.strictEqual(core.REF_0050_IRR, 11.8, '0050 reference official CAGR is 11.8%');
   assert.strictEqual(core.REF_VOO_IRR, 14.6, 'VOO reference official CAGR is 14.6%');
   assert.strictEqual(core.REF_QQQ_IRR, 14.2, 'QQQ reference official CAGR is 14.2%');
@@ -515,6 +515,112 @@ test('v3 pinned 0050/VOO/QQQ DCA rows, TW/US holding updates immediately update 
   assert.strictEqual(sectionIds[sectionIds.length - 1], 'sec-history', 'History section (#sec-history) must be at the very bottom');
   const toggleBtns = [...html.matchAll(/data-act="toggle-panel"\s+data-panel="([^"]+)"/g)].map(m => m[1]);
   assert.deepStrictEqual(toggleBtns, sectionIds, 'Every section must have a collapse/expand toggle button');
+});
+
+// 10. v4 Requirements: Rolling horizon projection date subscripts (YYYY/MM), auto-advancing loan paid count (paidAsOf), and auto-advancing investYears (investYearsAsOf)
+test('v4 rolling horizon date subscripts (YYYY/MM) in table & SVG chart, auto-advancing loan paidAsOf, and auto-advancing investYearsAsOf', () => {
+  // 10.1 Rolling projection date subscripts helper & DOM rendering
+  assert.strictEqual(core.projYearYm('2026-10-24', 0), '2026/10', 'Year 0 YYYY/MM');
+  assert.strictEqual(core.projYearYm('2026-10-24', 5), '2031/10', 'Year 5 YYYY/MM');
+  assert.strictEqual(core.projYearYm('2026-10-24', 10), '2036/10', 'Year 10 YYYY/MM');
+  assert.strictEqual(core.projYearYm('2026-10-24', 20), '2046/10', 'Year 20 YYYY/MM');
+  assert.strictEqual(core.projYearYm('2026-10-24', 30), '2056/10', 'Year 30 YYYY/MM');
+
+  // Verify UI renders <sub class="yr-sub">YYYY/MM</sub> in #projTable and <tspan class="axis-sub">YYYY/MM</tspan> in #projChart
+  const uiMatch = html.match(/<script id="ui">([\s\S]*?)<\/script>/);
+  const elements = {};
+  function makeEl(id) {
+    return {
+      id: id || '', innerHTML: '', textContent: '', value: '', hidden: false, open: true, className: '', style: {}, clientWidth: 800,
+      classList: { contains: () => true, toggle: () => {} },
+      setAttribute(k, v) { this[k] = v; },
+      getAttribute(k) { return this[k] || ''; },
+      hasAttribute(k) { return k in this; },
+      addEventListener() {},
+      getBoundingClientRect() { return { left: 0, width: 800 }; },
+      querySelector() { return makeEl(); },
+      querySelectorAll() { return [makeEl(), makeEl(), makeEl()]; }
+    };
+  }
+  const getEl = (sel) => {
+    const id = sel.replace(/^#/, '');
+    if (!elements[id]) elements[id] = makeEl(id);
+    return elements[id];
+  };
+  const storage = {};
+  let docListeners = {};
+  const docEl = makeEl('html');
+  docEl['data-theme'] = 'light';
+  const uiSandbox = Object.assign({}, sandbox, {
+    window: { matchMedia: () => ({ matches: false, addEventListener() {} }), addEventListener() {} },
+    document: {
+      documentElement: docEl,
+      querySelector: getEl,
+      querySelectorAll: () => [],
+      getElementById: getEl,
+      addEventListener(ev, fn) { docListeners[ev] = fn; }
+    },
+    localStorage: { getItem: (k) => storage[k] || null, setItem: (k, v) => { storage[k] = String(v); } },
+    requestAnimationFrame: (fn) => fn(),
+    setTimeout: () => 1,
+    clearTimeout: () => {}
+  });
+  vm.runInNewContext(coreMatch[1] + '\n' + uiMatch[1], uiSandbox, { filename: 'index.html#v4-ui' });
+
+  const todayYm0 = core.projYearYm(core.todayStr(), 0);
+  const todayYm10 = core.projYearYm(core.todayStr(), 10);
+  const todayYm30 = core.projYearYm(core.todayStr(), 30);
+  assert(elements.projTable.innerHTML.includes('現在<sub class="yr-sub">' + todayYm0 + '</sub>'), 'projTable renders Year 0 date subscript');
+  assert(elements.projTable.innerHTML.includes('第 10 年<sub class="yr-sub">' + todayYm10 + '</sub>'), 'projTable renders Year 10 date subscript');
+  assert(elements.projTable.innerHTML.includes('第 30 年<sub class="yr-sub">' + todayYm30 + '</sub>'), 'projTable renders Year 30 date subscript');
+  assert(elements.projChart.innerHTML.includes('<tspan class="axis-sub"') && elements.projChart.innerHTML.includes(todayYm10) && elements.projChart.innerHTML.includes(todayYm30), 'projChart renders YYYY/MM subscript tspans on X-axis');
+  assert(elements.footer.textContent.includes('基準日：' + core.todayStr()), 'Footer displays active system date anchor');
+
+  // 10.2 Loan paid + paidAsOf auto-advances when reopened months later
+  const loan = { name: '信貸', type: '信貸', principal: 1000000, rate: 3, term: 84, paid: 12, paidAsOf: '2026-10-23', startDate: '' };
+  assert.strictEqual(core.loanPaidCount(loan, '2026-10-23'), 12, 'On paidAsOf date, paid count is 12');
+  assert.strictEqual(core.loanPaidCount(loan, '2026-12-23'), 14, '2 months after paidAsOf, paid count auto-advances to 14');
+  const sumAt12 = core.loanSummary(loan, '2026-10-23');
+  const sumAt14 = core.loanSummary(loan, '2026-12-23');
+  assert.strictEqual(sumAt14.paid, 14, 'loanSummary.paid is 14 after 2 months');
+  assert.strictEqual(sumAt14.remainingTerms, 70, 'loanSummary.remainingTerms decreases to 70');
+  assert(sumAt14.balance < sumAt12.balance, 'loanSummary.balance automatically decreases after 2 months');
+  near(sumAt14.balance, core.loanBalance(1000000, 3, 84, 14), 1e-6, 'loanSummary.balance matches k=14');
+
+  // Manual edit of loans.0.paid resets paidAsOf to todayStr()
+  const paidInput = makeEl();
+  paidInput['data-path'] = 'loans.0.paid';
+  paidInput['data-kind'] = 'num';
+  paidInput.value = '20';
+  docListeners.input({ target: paidInput });
+  const savedAfterLoanEdit = JSON.parse(storage['finTracker.state']);
+  assert.strictEqual(savedAfterLoanEdit.loans[0].paid, 20, 'Editing paid updates loan.paid to 20');
+  assert.strictEqual(savedAfterLoanEdit.loans[0].paidAsOf, core.todayStr(), 'Editing paid resets loan.paidAsOf to todayStr()');
+
+  // 10.3 effectiveInvestYears auto-advances with elapsed days and updates CAGR / XIRR
+  const s = core.defaultState();
+  s.cash.investYears = 3;
+  s.cash.investYearsAsOf = '2026-10-23';
+  near(core.effectiveInvestYears(s.cash, '2026-10-23'), 3.0, 1e-9, 'On investYearsAsOf date, effectiveInvestYears is 3.0');
+
+  // 6 months later (~182.625 days -> 2027-04-24 is 183 days after 2026-10-23)
+  const effAfter6m = core.effectiveInvestYears(s.cash, '2027-04-24');
+  near(effAfter6m, 3 + 183 / 365.25, 1e-6, 'After 183 days, effectiveInvestYears increases by ~0.501 years');
+  const mAtStart = core.computeAll(s, '2026-10-23');
+  const mAfter6m = core.computeAll(s, '2027-04-24');
+  near(mAfter6m.investYears, effAfter6m, 1e-6, 'computeAll uses effectiveInvestYears');
+  assert(mAfter6m.cagr.cagr < mAtStart.cagr.cagr, 'Longer elapsed time with same unrealized gain lowers annualized CAGR');
+  assert(mAfter6m.xirr < mAtStart.xirr, 'Longer elapsed time with same unrealized gain lowers annualized XIRR');
+
+  // Manual edit of cash.investYears resets investYearsAsOf to todayStr()
+  const yrsInput = makeEl();
+  yrsInput['data-path'] = 'cash.investYears';
+  yrsInput['data-kind'] = 'num';
+  yrsInput.value = '4.5';
+  docListeners.input({ target: yrsInput });
+  const savedAfterYrsEdit = JSON.parse(storage['finTracker.state']);
+  near(savedAfterYrsEdit.cash.investYears, 4.5, 1e-6, 'Editing investYears updates cash.investYears to 4.5');
+  assert.strictEqual(savedAfterYrsEdit.cash.investYearsAsOf, core.todayStr(), 'Editing investYears resets cash.investYearsAsOf to todayStr()');
 });
 
 console.log('\nAll ' + passed + ' test suites passed!');
