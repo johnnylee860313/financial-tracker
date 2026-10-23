@@ -1,0 +1,10 @@
+# Ignore everything by default
+*
+
+# Only track index.html, README.md, tests/calc.test.js, and .gitignore
+!/.gitignore
+!/index.html
+!/README.md
+!/tests/
+/tests/*
+!/tests/calc.test.js

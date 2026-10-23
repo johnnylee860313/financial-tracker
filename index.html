@@ -1,0 +1,1644 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>財務追蹤器</title>
+<script>
+/* ==== [MODULE: THEME-BOOT] ==== */
+(function () {
+  var t = null;
+  try { t = localStorage.getItem('finTracker.theme'); } catch (e) {}
+  if (t !== 'light' && t !== 'dark') {
+    t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  }
+  document.documentElement.setAttribute('data-theme', t);
+})();
+</script>
+<style>
+/* ==== [MODULE: STYLE] ==== */
+:root, [data-theme="light"] {
+  --bg: #f3f4f7; --surface: #ffffff; --surface-2: #f8f9fb; --border: #e2e5eb;
+  --text: #1b2130; --muted: #687184; --accent: #2f6fdb; --accent-weak: #dde8fb; --on-accent: #ffffff;
+  --ok: #1d8049; --ok-bg: #e3f4ea; --warn: #a96300; --warn-bg: #fcefd8; --bad: #c42f3d; --bad-bg: #fbe4e6;
+  --up: #c42f3d; --down: #1d8049;
+  --c1: #2f6fdb; --c2: #e07b39; --c3: #2a9d8f; --c4: #c42f3d; --c5: #7b5cd6; --c6: #8a93a6;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .05);
+}
+[data-theme="dark"] {
+  --bg: #0e1117; --surface: #161a22; --surface-2: #1c212b; --border: #2a303b;
+  --text: #e5e8ee; --muted: #98a1b3; --accent: #6d9cf0; --accent-weak: #1f2b44; --on-accent: #0e1117;
+  --ok: #4cc184; --ok-bg: #14281d; --warn: #e2a449; --warn-bg: #2c2313; --bad: #f06b77; --bad-bg: #33171b;
+  --up: #f06b77; --down: #4cc184;
+  --c1: #6d9cf0; --c2: #f0a060; --c3: #4cc1b3; --c4: #f06b77; --c5: #a68df0; --c6: #8a93a6;
+  --shadow: none;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", "Segoe UI", Roboto, sans-serif;
+  font-size: 15px; line-height: 1.5;
+}
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+header.top { padding: 16px 0 4px; }
+.top-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { font-size: 20px; margin: 0; font-weight: 700; letter-spacing: .5px; }
+.actions { display: flex; gap: 8px; }
+.nav { display: flex; gap: 6px; overflow-x: auto; padding: 10px 0 12px; scrollbar-width: none; }
+.nav::-webkit-scrollbar { display: none; }
+.nav a {
+  flex: 0 0 auto; padding: 5px 12px; border-radius: 999px; color: var(--muted); text-decoration: none;
+  font-size: 13px; border: 1px solid var(--border); background: var(--surface);
+}
+.nav a:hover { color: var(--text); }
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px; margin: 0 0 16px; box-shadow: var(--shadow); scroll-margin-top: 12px;
+}
+.card h2 { font-size: 16px; margin: 0 0 12px; font-weight: 700; }
+.card h3.sub-title { font-size: 14px; margin: 16px 0 8px; color: var(--muted); font-weight: 600; }
+.card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.card-head h2 { margin: 0; }
+.muted { color: var(--muted); }
+.small-text { font-size: 12px; }
+
+/* metrics */
+.metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+@media (min-width: 900px) { .metrics { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; } }
+.metric {
+  background: var(--surface-2); border: 1px solid var(--border); border-top: 3px solid var(--border);
+  border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.metric[data-status="ok"] { border-top-color: var(--ok); }
+.metric[data-status="warn"] { border-top-color: var(--warn); }
+.metric[data-status="bad"] { border-top-color: var(--bad); }
+.metric-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; }
+.metric h3 { font-size: 13px; color: var(--muted); margin: 0; font-weight: 600; }
+.metric-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.metric-value .unit { font-size: 12px; font-weight: 500; color: var(--muted); margin-left: 3px; }
+.metric-sub { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.badge { font-size: 11px; padding: 1px 8px; border-radius: 999px; white-space: nowrap; font-weight: 600; }
+.badge:empty { display: none; }
+.s-ok.badge { background: var(--ok-bg); color: var(--ok); }
+.s-warn.badge { background: var(--warn-bg); color: var(--warn); }
+.s-bad.badge { background: var(--bad-bg); color: var(--bad); }
+.up { color: var(--up); }
+.down { color: var(--down); }
+
+/* details */
+details > summary { list-style: none; cursor: pointer; user-select: none; }
+details > summary::-webkit-details-marker { display: none; }
+details > summary::after {
+  content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 8px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg); transition: transform .15s;
+}
+details[open] > summary::after { transform: translateY(1px) rotate(-135deg); }
+.def { margin-top: auto; padding-top: 6px; }
+.def > summary { font-size: 12px; color: var(--accent); }
+.def-body { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.65; }
+.def-body p { margin: 0 0 4px; }
+
+/* advice */
+.advice-list { display: grid; gap: 8px; }
+.advice-item { border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--surface-2); }
+.advice-item.s-ok { border-left-color: var(--ok); }
+.advice-item.s-warn { border-left-color: var(--warn); }
+.advice-item.s-bad { border-left-color: var(--bad); }
+.advice-head { display: flex; gap: 8px; align-items: center; margin-bottom: 2px; }
+.advice-head strong { font-size: 14px; }
+.advice-item p { margin: 0; font-size: 13px; }
+
+/* forms */
+input.in, select.in {
+  font: inherit; font-size: 14px; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; width: 100%; min-width: 0;
+}
+@media (max-width: 640px) { input.in, select.in { font-size: 16px; } }
+input.in:focus, select.in:focus { outline: 2px solid var(--accent-weak); border-color: var(--accent); }
+input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 12px; }
+.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.field .hint { font-size: 12px; }
+.row-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+.btn {
+  font: inherit; font-size: 13px; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); cursor: pointer; white-space: nowrap;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn.small { padding: 4px 10px; font-size: 12px; }
+.btn.danger { color: var(--bad); }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button { font: inherit; font-size: 13px; border: 0; padding: 6px 14px; background: var(--surface); color: var(--text); cursor: pointer; }
+.seg button.on { background: var(--accent); color: var(--on-accent); }
+
+/* tables */
+.table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { padding: 6px; border-bottom: 1px solid var(--border); white-space: nowrap; text-align: left; vertical-align: middle; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; }
+td.r, th.r { text-align: right; }
+td.c, th.c { text-align: center; }
+tfoot td { font-weight: 700; border-bottom: none; }
+tr.hl td { background: var(--accent-weak); }
+td.empty, div.empty { color: var(--muted); text-align: center; padding: 18px 6px; font-size: 13px; }
+td input.w-sym { width: 84px; }
+td input.w-name { width: 104px; }
+td input.w-num { width: 96px; }
+td input.w-sm { width: 64px; }
+td input.w-date { width: 150px; }
+td select.in { width: auto; }
+
+/* loans */
+.loan { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 12px; background: var(--surface-2); }
+.loan-out { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; margin-top: 12px; }
+.kv { display: flex; flex-direction: column; }
+.kv span { font-size: 12px; color: var(--muted); }
+.kv b { font-variant-numeric: tabular-nums; font-size: 15px; }
+.loan-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.amort > summary { font-size: 13px; color: var(--accent); }
+.amort-body { max-height: 320px; overflow: auto; margin-top: 8px; border: 1px solid var(--border); border-radius: 8px; }
+.amort-body table th { position: sticky; top: 0; background: var(--surface); }
+
+/* charts */
+.chart { position: relative; width: 100%; min-height: 120px; }
+.chart-box { position: relative; }
+.chart-svg { display: block; touch-action: pan-y; }
+.chart-svg .grid { stroke: var(--border); stroke-width: 1; }
+.chart-svg .axis { fill: var(--muted); font-size: 11px; }
+.chart-svg .mlabel { fill: var(--text); font-size: 11px; font-weight: 600; }
+.chart-svg .hover-line { stroke: var(--muted); stroke-dasharray: 3 3; }
+.chart-tip {
+  position: absolute; top: 8px; pointer-events: none; background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; font-size: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .12); white-space: nowrap; font-variant-numeric: tabular-nums; z-index: 2;
+}
+.tip-title { font-weight: 700; margin-bottom: 2px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.legend-item {
+  font: inherit; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--text); cursor: pointer;
+}
+.legend-item.off { opacity: .4; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; flex: 0 0 auto; }
+.chart-tip .swatch { margin-right: 4px; }
+.stackbar { display: block; width: 100%; height: 22px; border-radius: 6px; overflow: hidden; }
+.stack-row { display: grid; grid-template-columns: 40px 1fr; gap: 8px; align-items: center; margin-bottom: 8px; font-size: 12px; color: var(--muted); }
+.proj-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 12px; }
+.proj-controls .field { width: 150px; }
+.proj-rate { font-size: 13px; color: var(--muted); margin: 0 0 8px; }
+.proj-rate b { color: var(--text); }
+.sum-line { font-size: 12px; margin-top: 8px; }
+.sum-line.s-bad { color: var(--bad); }
+.sum-line.s-ok { color: var(--ok); }
+
+footer.foot { color: var(--muted); font-size: 12px; text-align: center; padding: 8px 16px 32px; }
+.toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--text); color: var(--bg);
+  padding: 8px 16px; border-radius: 8px; font-size: 13px; z-index: 10; box-shadow: 0 4px 16px rgba(0, 0, 0, .2);
+}
+</style>
+</head>
+<body>
+<header class="top wrap">
+  <div class="top-row">
+    <h1>財務追蹤器</h1>
+    <div class="actions">
+      <button class="btn primary" data-act="snapshot">記錄快照</button>
+      <button class="btn" data-act="theme" id="btnTheme">夜間模式</button>
+    </div>
+  </div>
+  <nav class="nav" aria-label="區塊">
+    <a href="#sec-overview">總覽</a>
+    <a href="#sec-advice">建議</a>
+    <a href="#sec-alloc">配置</a>
+    <a href="#sec-projection">預測</a>
+    <a href="#sec-history">歷史</a>
+    <a href="#sec-tw">台股</a>
+    <a href="#sec-us">美股</a>
+    <a href="#sec-cash">現金</a>
+    <a href="#sec-loans">負債</a>
+    <a href="#sec-flows">投入紀錄</a>
+    <a href="#sec-targets">目標</a>
+    <a href="#sec-data">資料</a>
+  </nav>
+</header>
+
+<main class="wrap">
+  <section id="sec-overview" class="card">
+    <h2>總覽</h2>
+    <div class="metrics" id="metrics"></div>
+  </section>
+
+  <section id="sec-advice" class="card">
+    <h2>財務操作建議</h2>
+    <div class="advice-list" id="advice"></div>
+  </section>
+
+  <section id="sec-alloc" class="card">
+    <h2>資產配置</h2>
+    <div id="alloc"></div>
+  </section>
+
+  <section id="sec-projection" class="card">
+    <h2>未來預測</h2>
+    <div class="proj-controls" id="projControls"></div>
+    <p class="proj-rate" id="projRate"></p>
+    <div class="chart" id="projChart"></div>
+    <div class="table-wrap"><table id="projTable"></table></div>
+    <details class="def">
+      <summary>定義</summary>
+      <div class="def-body">
+        <p>加權年化報酬率 = [Σ(標的市值 × 官方年化 IRR) + 現金部位 × 現金年化報酬率] / 資產總值。</p>
+        <p>實質報酬率 = (1 + 名目報酬率) / (1 + 通膨率) - 1。</p>
+        <p>資產每月以 (1 + 年化報酬率)^(1/12) - 1 成長，並加上每月投入。負債依各筆攤還表取剩餘本金，只付息者維持原額；每月還款視為由收入支付，不自資產扣除。</p>
+        <p>淨值 = 資產 - 負債。實質模式下，資產以實質報酬率成長、每月投入視為固定購買力，負債以通膨率折現。</p>
+      </div>
+    </details>
+  </section>
+
+  <section id="sec-history" class="card">
+    <h2>歷史紀錄</h2>
+    <div class="chart" id="histChart"></div>
+    <div class="table-wrap"><table id="histTable"></table></div>
+  </section>
+
+  <section id="sec-tw" class="card">
+    <h2>台股持股</h2>
+    <div class="table-wrap"><table id="twTable"></table></div>
+    <div class="row-actions"><button class="btn small" data-act="add-row" data-list="tw">新增標的</button></div>
+  </section>
+
+  <section id="sec-us" class="card">
+    <div class="card-head">
+      <h2>美股持股</h2>
+      <label class="field" style="width:150px">USD/TWD 匯率<span id="fxSlotUs"></span></label>
+    </div>
+    <div class="table-wrap"><table id="usTable"></table></div>
+    <div class="row-actions"><button class="btn small" data-act="add-row" data-list="us">新增標的</button></div>
+  </section>
+
+  <section id="sec-cash" class="card">
+    <h2>現金與收支</h2>
+    <div class="form-grid" id="cashForm"></div>
+  </section>
+
+  <section id="sec-loans" class="card">
+    <h2>負債</h2>
+    <div id="loanList"></div>
+    <div class="row-actions"><button class="btn small" data-act="add-row" data-list="loans">新增負債</button></div>
+  </section>
+
+  <section id="sec-flows" class="card">
+    <h2>投入與提領紀錄</h2>
+    <div class="table-wrap"><table id="flowTable"></table></div>
+    <div class="row-actions"><button class="btn small" data-act="add-row" data-list="cashflows">新增紀錄</button></div>
+  </section>
+
+  <section id="sec-targets" class="card">
+    <h2>目標與門檻</h2>
+    <div class="form-grid" id="targetForm"></div>
+    <div class="sum-line" id="allocSum"></div>
+  </section>
+
+  <section id="sec-data" class="card">
+    <h2>資料管理</h2>
+    <div class="row-actions" style="margin-top:0">
+      <button class="btn small" data-act="export">匯出 JSON</button>
+      <button class="btn small" data-act="import">匯入 JSON</button>
+      <button class="btn small danger" data-act="reset">重設為範例</button>
+      <button class="btn small danger" data-act="clear">清空資料</button>
+      <input type="file" id="importFile" accept=".json,application/json" hidden>
+    </div>
+  </section>
+</main>
+
+<footer class="foot" id="footer"></footer>
+<div class="toast" id="toast" hidden></div>
+
+<script id="core">
+/* ==== [MODULE: CONFIG] ==== */
+const APP_VERSION = 'v1';
+const SCHEMA_VERSION = 1;
+const STORAGE_KEY = 'finTracker.state';
+const THEME_KEY = 'finTracker.theme';
+const LEGACY_V0_KEY = 'tracker_v2_data';
+const LOAN_TYPES = ['信貸', '房貸', '質押', '融資', '其他'];
+const MARGIN_TYPES = ['質押', '融資'];
+const DAY_MS = 86400000;
+
+/* ==== [MODULE: UTIL] ==== */
+function num(x) {
+  if (typeof x === 'number') return isFinite(x) ? x : 0;
+  if (typeof x === 'string') {
+    const s = x
+      .replace(/[\uFF0D\uFF0E\uFF10-\uFF19]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); })
+      .replace(/[,\s\uFF0C%]/g, '');
+    const n = Number(s);
+    return isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+function isObj(x) { return x !== null && typeof x === 'object' && !Array.isArray(x); }
+function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+function pad2(n) { return (n < 10 ? '0' : '') + n; }
+function parseDate(s) {
+  if (typeof s !== 'string') return null;
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s.trim());
+  if (!m) return null;
+  const y = +m[1], mo = +m[2], d = +m[3];
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  return Date.UTC(y, mo - 1, d);
+}
+function toDateStr(ms) {
+  const d = new Date(ms);
+  return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate());
+}
+function todayStr(d) {
+  d = d || new Date();
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+}
+function fmtNum(n, d) {
+  d = d == null ? 0 : d;
+  n = num(n);
+  const p = Math.pow(10, d);
+  let r = Math.round(n * p) / p;
+  if (r === 0) r = 0;
+  return r.toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+function fmtMoney(n) { return fmtNum(n, 0) + ' 元'; }
+function fmtPct(x, d) {
+  if (x == null || !isFinite(x)) return '無資料';
+  return fmtNum(x * 100, d == null ? 2 : d) + '%';
+}
+function fmtSignedPct(x, d) {
+  if (x == null || !isFinite(x)) return '無資料';
+  return (Math.round(x * 10000) > 0 ? '+' : '') + fmtPct(x, d);
+}
+function fmtSigned(n) { return (Math.round(n) > 0 ? '+' : '') + fmtNum(n, 0); }
+function fmtCompact(v) {
+  v = num(v);
+  const a = Math.abs(v);
+  if (a >= 1e8) return Number((v / 1e8).toFixed(2)).toLocaleString('zh-TW', { maximumFractionDigits: 2 }) + '億';
+  if (a >= 1e4) return Number((v / 1e4).toFixed(1)).toLocaleString('zh-TW', { maximumFractionDigits: 1 }) + '萬';
+  return fmtNum(v, 0);
+}
+
+/* ==== [MODULE: STATE] ==== */
+function holdingTemplate() { return { symbol: '', name: '', shares: 0, avg: 0, price: 0, lev: 1, pledged: false, irr: 0 }; }
+function loanTemplate() { return { name: '', type: '信貸', principal: 0, rate: 0, term: 0, paid: 0, startDate: '' }; }
+function flowTemplate() { return { date: '', type: 'in', amount: 0 }; }
+function snapshotTemplate() { return { date: '', tw: 0, us: 0, cash: 0, debt: 0, netWorth: 0, totalAssets: 0 }; }
+function emptyState() {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    fx: { usdTwd: 32 },
+    cash: { twd: 0, usd: 0, unusedCredit: 0, monthlyIncome: 0, monthlyExpense: 0 },
+    tw: [], us: [], loans: [], cashflows: [], snapshots: [],
+    targets: {
+      leverage: 1.5, levBand: 0.1,
+      allocTw: 50, allocUs: 30, allocCash: 20, allocTol: 5,
+      maintWarn: 160, maintCall: 130,
+      dsrMax: 35, debtRatioMax: 40,
+      reserveMonths: 6, reserveAmount: 0,
+      inflation: 2
+    },
+    projection: { monthly: 0, cashRate: 1, real: false, years: 30 }
+  };
+}
+function defaultState() {
+  const s = emptyState();
+  s.fx.usdTwd = 32;
+  s.cash = { twd: 300000, usd: 2000, unusedCredit: 500000, monthlyIncome: 80000, monthlyExpense: 35000 };
+  s.tw = [
+    { symbol: '0050', name: '元大台灣50', shares: 6000, avg: 150, price: 195, lev: 1, pledged: true, irr: 10 },
+    { symbol: '00631L', name: '元大台灣50正2', shares: 20000, avg: 18, price: 23, lev: 2, pledged: false, irr: 18 }
+  ];
+  s.us = [
+    { symbol: 'VOO', name: 'Vanguard S&P 500', shares: 40, avg: 450, price: 540, lev: 1, pledged: false, irr: 10 }
+  ];
+  s.loans = [
+    { name: '信貸', type: '信貸', principal: 1000000, rate: 3, term: 84, paid: 12, startDate: '' },
+    { name: '股票質押', type: '質押', principal: 300000, rate: 2.5, term: 0, paid: 0, startDate: '' }
+  ];
+  s.cashflows = [
+    { date: '2021-06-01', type: 'in', amount: 600000 },
+    { date: '2022-06-01', type: 'in', amount: 300000 },
+    { date: '2023-06-01', type: 'in', amount: 300000 },
+    { date: '2024-06-01', type: 'in', amount: 200000 },
+    { date: '2025-06-01', type: 'out', amount: 50000 }
+  ];
+  s.snapshots = [
+    { date: '2025-12-31', tw: 1450000, us: 640000, cash: 340000, debt: 1220000, netWorth: 1210000, totalAssets: 2430000 },
+    { date: '2026-03-31', tw: 1520000, us: 655000, cash: 350000, debt: 1205000, netWorth: 1320000, totalAssets: 2525000 },
+    { date: '2026-06-30', tw: 1580000, us: 672000, cash: 355000, debt: 1190000, netWorth: 1417000, totalAssets: 2607000 },
+    { date: '2026-09-30', tw: 1610000, us: 685000, cash: 362000, debt: 1180000, netWorth: 1477000, totalAssets: 2657000 }
+  ];
+  s.targets.leverage = 1.6;
+  s.projection.monthly = 20000;
+  return s;
+}
+function hasOwn(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+/* Merge `over` into a fresh copy of `base`. Only keys present in base survive; primitive types follow base. */
+function deepMerge(base, over) {
+  if (Array.isArray(base)) return Array.isArray(over) ? over.slice() : base.slice();
+  if (isObj(base)) {
+    const o = isObj(over) ? over : {};
+    const out = {};
+    Object.keys(base).forEach(function (k) { out[k] = hasOwn(o, k) ? deepMerge(base[k], o[k]) : base[k]; });
+    return out;
+  }
+  if (over === undefined || over === null) return base;
+  if (typeof base === 'number') return num(over);
+  if (typeof base === 'boolean') return over === true || over === 'true' || over === 1;
+  if (typeof base === 'string') return (typeof over === 'string' || typeof over === 'number') ? String(over) : base;
+  return over;
+}
+function normalizeState(raw) {
+  const d = defaultState();
+  if (!isObj(raw)) return d;
+  if (raw.twStocks || raw.usStocks || raw.params) raw = migrateV0(raw);
+  const s = deepMerge(d, raw);
+  const rows = function (arr, tpl, fallback) {
+    return Array.isArray(arr) ? arr.filter(isObj).map(function (r) { return deepMerge(tpl(), r); }) : fallback;
+  };
+  s.tw = rows(raw.tw, holdingTemplate, d.tw);
+  s.us = rows(raw.us, holdingTemplate, d.us);
+  s.loans = rows(raw.loans, loanTemplate, d.loans);
+  s.cashflows = rows(raw.cashflows, flowTemplate, d.cashflows);
+  s.snapshots = rows(raw.snapshots, snapshotTemplate, d.snapshots);
+  s.loans.forEach(function (l) { if (LOAN_TYPES.indexOf(l.type) < 0) l.type = '其他'; });
+  s.cashflows.forEach(function (c) { if (c.type !== 'out') c.type = 'in'; });
+  s.snapshots = s.snapshots
+    .filter(function (x) { return parseDate(x.date) != null; })
+    .sort(function (a, b) { return parseDate(a.date) - parseDate(b.date); });
+  s.schemaVersion = SCHEMA_VERSION;
+  return s;
+}
+/* Convert v0 (gemini-code, key tracker_v2_data) data into the v1 shape. */
+function migrateV0(v) {
+  const p = isObj(v.params) ? v.params : {};
+  const mapH = function (h) {
+    return { symbol: h.symbol, shares: h.shares, avg: h.avgPrice, price: h.curPrice, lev: h.lev || 1, pledged: !!h.pledged, irr: 0 };
+  };
+  const out = {
+    fx: { usdTwd: p.usdCurRate },
+    cash: { twd: p.twdCash, usd: p.usdCash, unusedCredit: p.unusedCredit, monthlyIncome: p.monthlyIncome },
+    targets: { leverage: p.targetLev, maintCall: p.marginCallLine, allocTw: p.targetTwPct, allocUs: p.targetUsPct, allocCash: p.targetCashPct },
+    projection: { monthly: p.monthlyAdd }
+  };
+  if (Array.isArray(v.twStocks)) out.tw = v.twStocks.filter(isObj).map(mapH);
+  if (Array.isArray(v.usStocks)) out.us = v.usStocks.filter(isObj).map(mapH);
+  if (Array.isArray(v.loans)) {
+    out.loans = v.loans.filter(isObj).map(function (l) {
+      const io = l.type === 'interest_only';
+      const P = num(io ? (l.balance || l.initAmount) : l.initAmount);
+      const n = io ? 0 : Math.round(num(l.periods));
+      let paid = 0;
+      if (!io && n > 0 && l.balance != null) {
+        const bal = num(l.balance);
+        for (let k = 0; k <= n; k++) { if (loanBalance(P, l.rate, n, k) <= bal + 0.5) { paid = k; break; } }
+      }
+      return { name: l.name, type: l.isMargin ? '質押' : (io ? '其他' : '信貸'), principal: P, rate: l.rate, term: n, paid: paid, startDate: '' };
+    });
+  }
+  if (Array.isArray(v.cashflows)) {
+    out.cashflows = v.cashflows.filter(isObj).map(function (c) {
+      const a = num(c.amount);
+      return { date: c.date, type: a < 0 ? 'out' : 'in', amount: Math.abs(a) };
+    });
+  }
+  return out;
+}
+
+/* ==== [MODULE: LOAN] ==== */
+/* Equal-payment (本息平均攤還) monthly payment. n <= 0 means interest-only. */
+function loanPayment(P, ratePct, n) {
+  P = num(P); n = Math.round(num(n));
+  const r = num(ratePct) / 100 / 12;
+  if (P <= 0) return 0;
+  if (n <= 0) return P * r;
+  if (r === 0) return P / n;
+  const f = Math.pow(1 + r, n);
+  return P * r * f / (f - 1);
+}
+/* Remaining principal after k payments. */
+function loanBalance(P, ratePct, n, k) {
+  P = num(P); n = Math.round(num(n)); k = Math.max(0, Math.round(num(k)));
+  if (P <= 0) return 0;
+  if (n <= 0) return P;
+  if (k >= n) return 0;
+  const r = num(ratePct) / 100 / 12;
+  if (r === 0) return P * (1 - k / n);
+  const pm = loanPayment(P, ratePct, n);
+  const f = Math.pow(1 + r, k);
+  return Math.max(0, P * f - pm * (f - 1) / r);
+}
+function monthsElapsed(startStr, endStr) {
+  const a = parseDate(startStr), b = parseDate(endStr);
+  if (a == null || b == null || b < a) return 0;
+  const da = new Date(a), db = new Date(b);
+  let m = (db.getUTCFullYear() - da.getUTCFullYear()) * 12 + (db.getUTCMonth() - da.getUTCMonth());
+  if (db.getUTCDate() < da.getUTCDate()) m -= 1;
+  return Math.max(0, m);
+}
+function loanPaidCount(loan, today) {
+  const n = Math.round(num(loan.term));
+  let k = parseDate(loan.startDate) != null ? monthsElapsed(loan.startDate, today) : Math.round(num(loan.paid));
+  k = Math.max(0, k);
+  return n > 0 ? Math.min(k, n) : k;
+}
+function loanSummary(loan, today) {
+  const P = num(loan.principal), rate = num(loan.rate), n = Math.round(num(loan.term));
+  const io = n <= 0;
+  const k = loanPaidCount(loan, today);
+  const bal = loanBalance(P, rate, n, k);
+  const full = loanPayment(P, rate, n);
+  return {
+    interestOnly: io,
+    paid: k,
+    balance: bal,
+    payment: io ? full : (k >= n ? 0 : full),
+    remainingTerms: io ? null : Math.max(0, n - k),
+    totalInterest: io ? null : Math.max(0, full * n - P),
+    monthlyInterest: bal * rate / 1200
+  };
+}
+function amortSchedule(P, ratePct, n) {
+  P = num(P); n = Math.round(num(n));
+  const rows = [];
+  if (P <= 0 || n <= 0) return rows;
+  const r = num(ratePct) / 100 / 12;
+  const pm = loanPayment(P, ratePct, n);
+  let bal = P;
+  for (let i = 1; i <= n; i++) {
+    const interest = bal * r;
+    let principal = pm - interest;
+    if (i === n) principal = bal;
+    bal = bal - principal;
+    rows.push({ period: i, payment: interest + principal, interest: interest, principal: principal, balance: Math.max(0, bal) });
+  }
+  return rows;
+}
+
+/* ==== [MODULE: XIRR] ==== */
+/* flows: [{date: ms, amount}] investor perspective (outflow negative). Returns annual rate or null. */
+function xirr(flows) {
+  const fl = (flows || [])
+    .filter(function (f) { return f && isFinite(f.date) && isFinite(f.amount) && f.amount !== 0; })
+    .sort(function (a, b) { return a.date - b.date; });
+  if (fl.length < 2) return null;
+  if (!fl.some(function (f) { return f.amount > 0; }) || !fl.some(function (f) { return f.amount < 0; })) return null;
+  const t0 = fl[0].date;
+  const ts = fl.map(function (f) { return (f.date - t0) / DAY_MS / 365; });
+  const scale = fl.reduce(function (s, f) { return s + Math.abs(f.amount); }, 0);
+  const npv = function (r) { let s = 0; for (let i = 0; i < fl.length; i++) s += fl[i].amount / Math.pow(1 + r, ts[i]); return s; };
+  const dnpv = function (r) { let s = 0; for (let i = 0; i < fl.length; i++) s -= ts[i] * fl[i].amount / Math.pow(1 + r, ts[i] + 1); return s; };
+  let r = 0.1;
+  for (let i = 0; i < 100; i++) {
+    const y = npv(r), d = dnpv(r);
+    if (!isFinite(y) || !isFinite(d) || d === 0) break;
+    const nr = r - y / d;
+    if (!isFinite(nr) || nr <= -0.999999) break;
+    if (Math.abs(nr - r) < 1e-10) {
+      if (Math.abs(npv(nr)) < 1e-7 * scale) return nr;
+      break;
+    }
+    r = nr;
+  }
+  const grid = [-0.9999, -0.99, -0.9, -0.75, -0.5, -0.25, -0.1, 0, 0.05, 0.1, 0.2, 0.35, 0.5, 0.75, 1, 1.5, 2, 3, 5, 10, 20, 50, 100];
+  for (let g = 0; g < grid.length - 1; g++) {
+    let lo = grid[g], hi = grid[g + 1];
+    let flo = npv(lo), fhi = npv(hi);
+    if (!isFinite(flo) || !isFinite(fhi)) continue;
+    if (flo === 0) return lo;
+    if (flo * fhi > 0) continue;
+    for (let i = 0; i < 300; i++) {
+      const mid = (lo + hi) / 2, fm = npv(mid);
+      if (fm === 0 || (hi - lo) / 2 < 1e-12) return mid;
+      if (fm * flo < 0) { hi = mid; fhi = fm; } else { lo = mid; flo = fm; }
+    }
+    return (lo + hi) / 2;
+  }
+  return null;
+}
+
+/* ==== [MODULE: RETURNS] ==== */
+/* Modified Dietz return. flows: [{date, amount}] contributions positive, assumed within (start, end]. */
+function modifiedDietz(bmv, emv, flows, start, end) {
+  const T = end - start;
+  if (!(T > 0)) return null;
+  let sum = 0, wsum = 0;
+  (flows || []).forEach(function (f) {
+    const w = clamp((end - f.date) / T, 0, 1);
+    sum += f.amount; wsum += w * f.amount;
+  });
+  const denom = num(bmv) + wsum;
+  if (!(denom > 0)) return null;
+  return (num(emv) - num(bmv) - sum) / denom;
+}
+/* contributions: [{date: ms, amount}] positive = 投入. */
+function cagrFromCashflows(contributions, netWorth, todayMs) {
+  const fl = (contributions || []).filter(function (f) { return isFinite(f.date) && f.date <= todayMs && f.amount !== 0; })
+    .sort(function (a, b) { return a.date - b.date; });
+  if (!fl.length) return null;
+  const start = fl[0].date;
+  const years = (todayMs - start) / DAY_MS / 365;
+  if (!(years > 0)) return null;
+  const R = modifiedDietz(0, netWorth, fl, start, todayMs);
+  if (R == null || 1 + R <= 0) return null;
+  return { totalReturn: R, years: years, cagr: Math.pow(1 + R, 1 / years) - 1 };
+}
+/* Arithmetic average annual return from consecutive snapshots (sub-period Modified Dietz). */
+function avgAnnualFromSnapshots(snapshots, contributions) {
+  const snaps = (snapshots || []).map(function (s) { return { t: parseDate(s.date), nw: num(s.netWorth) }; })
+    .filter(function (s) { return s.t != null; })
+    .sort(function (a, b) { return a.t - b.t; });
+  if (snaps.length < 2) return null;
+  let sumR = 0, sumDays = 0, link = 1, periods = 0;
+  for (let i = 1; i < snaps.length; i++) {
+    const a = snaps[i - 1], b = snaps[i];
+    const days = (b.t - a.t) / DAY_MS;
+    if (days <= 0) continue;
+    const inside = (contributions || []).filter(function (f) { return f.date > a.t && f.date <= b.t; });
+    const r = modifiedDietz(a.nw, b.nw, inside, a.t, b.t);
+    if (r == null) continue;
+    sumR += r; sumDays += days; link *= (1 + r); periods++;
+  }
+  if (!(sumDays > 0)) return null;
+  return { arithmetic: sumR / sumDays * 365, twr: link > 0 ? Math.pow(link, 365 / sumDays) - 1 : null, periods: periods, days: sumDays };
+}
+
+/* ==== [MODULE: CALC] ==== */
+function holdingCalc(h, fx) {
+  const sh = num(h.shares), avg = num(h.avg), px = num(h.price);
+  const lev = num(h.lev) || 1;
+  const mvLocal = sh * px, costLocal = sh * avg;
+  const mv = mvLocal * fx, cost = costLocal * fx;
+  return {
+    mvLocal: mvLocal, costLocal: costLocal, mv: mv, cost: cost, pl: mv - cost,
+    ret: costLocal > 0 ? (mvLocal - costLocal) / costLocal : null,
+    lev: lev, exposure: mv * lev, pledged: !!h.pledged, irr: num(h.irr) / 100
+  };
+}
+function sumBy(arr, k) { return arr.reduce(function (a, x) { return a + (num(x[k])); }, 0); }
+function upperStatus(v, limit) {
+  if (v == null) return 'bad';
+  if (!(limit > 0)) return 'na';
+  if (v > limit) return 'bad';
+  if (v > 0.9 * limit) return 'warn';
+  return 'ok';
+}
+function computeAll(s, today) {
+  today = today || todayStr();
+  const todayMs = parseDate(today);
+  const t = s.targets;
+  const fx = num(s.fx.usdTwd);
+  const m = { today: today };
+  m.tw = s.tw.map(function (h) { return holdingCalc(h, 1); });
+  m.us = s.us.map(function (h) { return holdingCalc(h, fx); });
+  m.twMV = sumBy(m.tw, 'mv'); m.twCost = sumBy(m.tw, 'cost'); m.twPL = m.twMV - m.twCost;
+  m.twRet = m.twCost > 0 ? m.twPL / m.twCost : null; m.twExp = sumBy(m.tw, 'exposure');
+  m.usMV = sumBy(m.us, 'mv'); m.usCost = sumBy(m.us, 'cost'); m.usPL = m.usMV - m.usCost;
+  m.usMVUsd = sumBy(m.us, 'mvLocal'); m.usCostUsd = sumBy(m.us, 'costLocal');
+  m.usRet = m.usCostUsd > 0 ? (m.usMVUsd - m.usCostUsd) / m.usCostUsd : null; m.usExp = sumBy(m.us, 'exposure');
+  m.cashTwd = num(s.cash.twd); m.cashUsd = num(s.cash.usd) * fx; m.cash = m.cashTwd + m.cashUsd;
+  m.totalAssets = m.twMV + m.usMV + m.cash;
+
+  m.loans = s.loans.map(function (l) { const x = loanSummary(l, today); x.type = l.type; x.rate = num(l.rate); return x; });
+  m.debt = sumBy(m.loans, 'balance');
+  m.monthlyDebt = sumBy(m.loans, 'payment');
+  m.avgDebtRate = m.debt > 0 ? m.loans.reduce(function (a, l) { return a + l.balance * l.rate; }, 0) / m.debt / 100 : 0;
+  m.netWorth = m.totalAssets - m.debt;
+
+  m.exposure = m.twExp + m.usExp;
+  m.leverage = m.netWorth > 0 ? m.exposure / m.netWorth : null;
+  m.debtRatio = m.totalAssets > 0 ? m.debt / m.totalAssets : (m.debt > 0 ? null : 0);
+
+  m.pledgedMV = m.tw.concat(m.us).reduce(function (a, h) { return a + (h.pledged ? h.mv : 0); }, 0);
+  m.marginDebt = m.loans.reduce(function (a, l) { return a + (MARGIN_TYPES.indexOf(l.type) >= 0 ? l.balance : 0); }, 0);
+  m.maint = m.marginDebt > 0 ? m.pledgedMV / m.marginDebt : null;
+  const warnL = num(t.maintWarn) / 100, callL = num(t.maintCall) / 100;
+  m.dropToCall = m.maint != null && m.maint > 0 ? Math.max(0, 1 - callL / m.maint) : (m.maint != null ? 0 : null);
+  m.dropToWarn = m.maint != null && m.maint > 0 ? Math.max(0, 1 - warnL / m.maint) : (m.maint != null ? 0 : null);
+
+  const ta = m.totalAssets;
+  m.alloc = [
+    { key: 'tw', name: '台股', value: m.twMV, target: num(t.allocTw) / 100 },
+    { key: 'us', name: '美股', value: m.usMV, target: num(t.allocUs) / 100 },
+    { key: 'cash', name: '現金', value: m.cash, target: num(t.allocCash) / 100 }
+  ].map(function (c) {
+    const actual = ta > 0 ? c.value / ta : 0;
+    c.actual = actual; c.dev = actual - c.target; c.rebalance = c.target * ta - c.value;
+    return c;
+  });
+  m.allocTargetSum = num(t.allocTw) + num(t.allocUs) + num(t.allocCash);
+  m.allocDevTotal = m.alloc.reduce(function (a, c) { return a + Math.abs(c.dev); }, 0);
+  m.allocDevMax = m.alloc.reduce(function (a, c) { return Math.max(a, Math.abs(c.dev)); }, 0);
+
+  m.income = num(s.cash.monthlyIncome);
+  m.expense = num(s.cash.monthlyExpense);
+  m.dsr = m.income > 0 ? m.monthlyDebt / m.income : (m.monthlyDebt > 0 ? null : 0);
+  m.unusedCredit = num(s.cash.unusedCredit);
+  m.dryPowder = m.cash + m.unusedCredit;
+  m.monthlyOutflow = m.expense + m.monthlyDebt;
+  m.dryMonths = m.monthlyOutflow > 0 ? m.dryPowder / m.monthlyOutflow : null;
+  m.cashMonths = m.monthlyOutflow > 0 ? m.cash / m.monthlyOutflow : null;
+  m.reserveTarget = num(t.reserveAmount) > 0 ? num(t.reserveAmount) : num(t.reserveMonths) * m.monthlyOutflow;
+
+  const contributions = s.cashflows.map(function (c) {
+    const sign = c.type === 'out' ? -1 : 1;
+    return { date: parseDate(c.date), amount: sign * num(c.amount) };
+  }).filter(function (f) { return f.date != null && f.amount !== 0; });
+  m.contributions = contributions;
+  m.netContribution = contributions.reduce(function (a, f) { return a + f.amount; }, 0);
+  const xflows = contributions.filter(function (f) { return f.date <= todayMs; })
+    .map(function (f) { return { date: f.date, amount: -f.amount }; });
+  xflows.push({ date: todayMs, amount: m.netWorth });
+  m.xirr = contributions.length ? xirr(xflows) : null;
+  m.cagr = cagrFromCashflows(contributions, m.netWorth, todayMs);
+  m.avgAnnual = avgAnnualFromSnapshots(s.snapshots, contributions);
+
+  m.weightedIrr = weightedIrr(s, m);
+  m.status = {
+    leverage: statusLeverage(m, t),
+    debtRatio: upperStatus(m.debtRatio, num(t.debtRatioMax) / 100),
+    dsr: upperStatus(m.dsr, num(t.dsrMax) / 100),
+    maint: statusMaint(m, t),
+    alloc: statusAlloc(m, t),
+    reserve: statusReserve(m)
+  };
+  return m;
+}
+function statusLeverage(m, t) {
+  if (m.netWorth <= 0 || m.leverage == null) return m.exposure > 0 || m.netWorth < 0 ? 'bad' : 'na';
+  const b = Math.abs(num(t.levBand)), d = m.leverage - num(t.leverage);
+  if (Math.abs(d) <= b + 1e-9) return 'ok';
+  if (d > 0) return d <= 2 * b ? 'warn' : 'bad';
+  return 'warn';
+}
+function statusMaint(m, t) {
+  if (m.maint == null) return 'na';
+  if (m.maint * 100 < num(t.maintWarn)) return 'bad';
+  if (m.dropToWarn < 0.1) return 'warn';
+  return 'ok';
+}
+function statusAlloc(m, t) {
+  if (!(m.totalAssets > 0)) return 'na';
+  if (Math.abs(m.allocTargetSum - 100) > 0.01) return 'warn';
+  const tol = num(t.allocTol) / 100;
+  if (m.allocDevMax > 2 * tol) return 'bad';
+  if (m.allocDevMax > tol) return 'warn';
+  return 'ok';
+}
+function statusReserve(m) {
+  if (!(m.reserveTarget > 0)) return 'na';
+  if (m.cash >= m.reserveTarget) return 'ok';
+  if (m.cash >= 0.5 * m.reserveTarget) return 'warn';
+  return 'bad';
+}
+function makeSnapshot(m, date) {
+  return { date: date || m.today, tw: Math.round(m.twMV), us: Math.round(m.usMV), cash: Math.round(m.cash),
+    debt: Math.round(m.debt), netWorth: Math.round(m.netWorth), totalAssets: Math.round(m.totalAssets) };
+}
+function upsertSnapshot(list, snap) {
+  const out = (list || []).filter(function (x) { return x.date !== snap.date; });
+  out.push(snap);
+  out.sort(function (a, b) { return parseDate(a.date) - parseDate(b.date); });
+  return out;
+}
+
+/* ==== [MODULE: PROJECTION] ==== */
+function weightedIrr(s, m) {
+  let w = 0, tot = 0;
+  m.tw.concat(m.us).forEach(function (h) { w += h.mv * h.irr; tot += h.mv; });
+  w += m.cash * num(s.projection.cashRate) / 100; tot += m.cash;
+  return tot > 0 ? w / tot : 0;
+}
+function realRate(nominal, inflation) { return (1 + num(nominal)) / (1 + num(inflation)) - 1; }
+/* opts: {assets, loans, today, rate (decimal), inflation (decimal), real, monthly, years} */
+function project(opts) {
+  const years = Math.max(1, Math.round(num(opts.years) || 30));
+  const infl = num(opts.inflation);
+  const real = !!opts.real;
+  let r = real ? realRate(opts.rate, infl) : num(opts.rate);
+  r = Math.max(r, -0.99);
+  const g = Math.pow(1 + r, 1 / 12) - 1;
+  const c = num(opts.monthly);
+  const loans = (opts.loans || []).map(function (l) {
+    return { P: num(l.principal), rate: num(l.rate), n: Math.round(num(l.term)), k0: loanPaidCount(l, opts.today || todayStr()) };
+  });
+  let A = num(opts.assets);
+  const rows = [];
+  for (let y = 0; y <= years; y++) {
+    if (y > 0) for (let i = 0; i < 12; i++) A = A * (1 + g) + c;
+    let debt = loans.reduce(function (a, l) { return a + loanBalance(l.P, l.rate, l.n, l.k0 + 12 * y); }, 0);
+    if (real) debt /= Math.pow(1 + infl, y);
+    rows.push({ year: y, assets: A, debt: debt, netWorth: A - debt });
+  }
+  return { rate: r, rows: rows };
+}
+
+/* ==== [MODULE: ADVICE] ==== */
+function buildAdvice(m, t) {
+  const out = [];
+  const T = num(t.leverage), b = Math.abs(num(t.levBand));
+  /* Leverage = exposure / net worth. Repaying debt with existing cash changes neither, so it is never suggested. */
+  if (m.netWorth <= 0) {
+    const need = (T > 0 ? m.exposure / T : 0) - m.netWorth;
+    out.push({ key: 'leverage', status: 'bad', title: '降槓桿',
+      text: '資產淨值為 ' + fmtMoney(m.netWorth) + '，已小於或等於零。需注入外部資金約 ' + fmtMoney(Math.max(need, -m.netWorth)) +
+        ' 才能回到目標槓桿 ' + fmtNum(T, 2) + ' 倍；同時應賣出部位降低曝險並償還負債。' });
+  } else if (m.leverage != null && m.exposure > 0 || T > 0) {
+    const L = m.leverage || 0, N = m.netWorth, E = m.exposure;
+    if (L > T + b + 1e-9) {
+      out.push({ key: 'leverage', status: m.status.leverage, title: '降槓桿',
+        text: '槓桿 ' + fmtNum(L, 2) + ' 倍，高於上限 ' + fmtNum(T + b, 2) + ' 倍。賣出部位降低曝險約 ' + fmtMoney(E - T * N) +
+          '（槓桿型標的依倍數折算市值，賣出所得可償還負債），或注入外部資金約 ' + fmtMoney(E / T - N) + '。以帳上現金償還負債不會降低槓桿。' });
+    } else if (L < T - b - 1e-9) {
+      out.push({ key: 'leverage', status: 'warn', title: '可升槓桿',
+        text: '槓桿 ' + fmtNum(L, 2) + ' 倍，低於下限 ' + fmtNum(Math.max(0, T - b), 2) + ' 倍。可增加曝險約 ' + fmtMoney(T * N - E) +
+          '（以現金或借款買入，槓桿型標的依倍數折算市值）。' });
+    } else {
+      out.push({ key: 'leverage', status: 'ok', title: '槓桿維持',
+        text: '槓桿 ' + fmtNum(L, 2) + ' 倍，位於目標區間 ' + fmtNum(Math.max(0, T - b), 2) + ' 至 ' + fmtNum(T + b, 2) + ' 倍。' });
+    }
+  }
+  if (m.maint != null) {
+    const W = num(t.maintWarn) / 100, C = num(t.maintCall) / 100, D = m.marginDebt, P = m.pledgedMV;
+    const mr = fmtNum(m.maint * 100, 1) + '%';
+    if (m.maint < W) {
+      const below = m.maint < C ? '低於斷頭線 ' + fmtNum(C * 100, 0) + '%' : '低於警戒線 ' + fmtNum(W * 100, 0) + '%';
+      out.push({ key: 'maint', status: 'bad', title: '補繳擔保品或還款',
+        text: '維持率 ' + mr + '，' + below + '。補繳擔保品約 ' + fmtMoney(W * D - P) + '，或償還質押/融資借款約 ' +
+          fmtMoney(D - P / W) + '，可回到警戒線。' });
+    } else if (m.dropToWarn < 0.1) {
+      out.push({ key: 'maint', status: 'warn', title: '預備擔保品',
+        text: '維持率 ' + mr + '，擔保品再下跌 ' + fmtPct(m.dropToWarn, 1) + ' 即觸及警戒線。預備擔保品或資金約 ' +
+          fmtMoney(W * D / 0.9 - P) + ' 可保留 10% 跌幅緩衝。' });
+    } else {
+      out.push({ key: 'maint', status: 'ok', title: '維持率安全',
+        text: '維持率 ' + mr + '，擔保品再下跌 ' + fmtPct(m.dropToWarn, 1) + ' 觸及警戒線，下跌 ' + fmtPct(m.dropToCall, 1) + ' 觸及斷頭線。' });
+    }
+  }
+  const dsrMax = num(t.dsrMax) / 100;
+  if (m.dsr == null) {
+    out.push({ key: 'dsr', status: 'bad', title: '每月償債負擔', text: '有每月還款但每月收入為 0，請輸入每月收入。' });
+  } else if (m.monthlyDebt > 0 && dsrMax > 0) {
+    if (m.dsr > dsrMax) {
+      out.push({ key: 'dsr', status: 'bad', title: '降低每月還款',
+        text: 'DSR ' + fmtPct(m.dsr, 1) + '，高於上限 ' + fmtPct(dsrMax, 0) + '。每月還款需減少約 ' + fmtMoney(m.monthlyDebt - dsrMax * m.income) +
+          '，可提前償還部分高利率負債或延長期數；或每月收入提高至 ' + fmtMoney(m.monthlyDebt / dsrMax) + '。' });
+    } else if (m.dsr > 0.9 * dsrMax) {
+      out.push({ key: 'dsr', status: 'warn', title: '每月償債負擔',
+        text: 'DSR ' + fmtPct(m.dsr, 1) + '，接近上限 ' + fmtPct(dsrMax, 0) + '。暫緩新增借款，剩餘可承擔每月還款約 ' + fmtMoney(dsrMax * m.income - m.monthlyDebt) + '。' });
+    } else {
+      out.push({ key: 'dsr', status: 'ok', title: '每月償債負擔',
+        text: 'DSR ' + fmtPct(m.dsr, 1) + '，上限 ' + fmtPct(dsrMax, 0) + '，尚可承擔每月還款約 ' + fmtMoney(dsrMax * m.income - m.monthlyDebt) + '。' });
+    }
+  }
+  const drMax = num(t.debtRatioMax) / 100;
+  if (m.debtRatio == null) {
+    out.push({ key: 'debtRatio', status: 'bad', title: '降低負債', text: '資產總值為 0 但仍有負債，需注入資金或償還負債。' });
+  } else if (m.debt > 0 && drMax > 0 && drMax < 1) {
+    if (m.debtRatio > drMax) {
+      const repay = (m.debt - drMax * m.totalAssets) / (1 - drMax);
+      out.push({ key: 'debtRatio', status: 'bad', title: '降低負債比',
+        text: '負債比 ' + fmtPct(m.debtRatio, 1) + '，高於上限 ' + fmtPct(drMax, 0) + '。以現金或賣出部位償還負債約 ' + fmtMoney(repay) +
+          '，或注入外部資金約 ' + fmtMoney(m.debt / drMax - m.totalAssets) + '。' });
+    } else if (m.debtRatio > 0.9 * drMax) {
+      out.push({ key: 'debtRatio', status: 'warn', title: '負債比', text: '負債比 ' + fmtPct(m.debtRatio, 1) + '，接近上限 ' + fmtPct(drMax, 0) + '，暫緩新增借款。' });
+    } else {
+      out.push({ key: 'debtRatio', status: 'ok', title: '負債比', text: '負債比 ' + fmtPct(m.debtRatio, 1) + '，低於上限 ' + fmtPct(drMax, 0) + '。' });
+    }
+  }
+  if (m.reserveTarget > 0) {
+    if (m.cash < m.reserveTarget) {
+      out.push({ key: 'reserve', status: m.status.reserve, title: '補足預備金',
+        text: '現金 ' + fmtMoney(m.cash) + '，低於預備金目標 ' + fmtMoney(m.reserveTarget) + '。需增加現金約 ' + fmtMoney(m.reserveTarget - m.cash) +
+          '，可由每月結餘累積或暫緩投入。' });
+    } else {
+      out.push({ key: 'reserve', status: 'ok', title: '預備金', text: '現金 ' + fmtMoney(m.cash) + '，達預備金目標 ' + fmtMoney(m.reserveTarget) + '。' });
+    }
+  }
+  if (m.totalAssets > 0) {
+    const tol = num(t.allocTol) / 100;
+    if (Math.abs(m.allocTargetSum - 100) > 0.01) {
+      out.push({ key: 'alloc', status: 'warn', title: '目標配置設定', text: '目標配置加總為 ' + fmtNum(m.allocTargetSum, 1) + '%，需調整為 100%。' });
+    } else if (m.allocDevMax > tol) {
+      const parts = m.alloc.filter(function (c) { return Math.abs(c.rebalance) >= 1; }).map(function (c) {
+        return c.name + (c.rebalance > 0 ? '增加' : '減少') + '約 ' + fmtMoney(Math.abs(c.rebalance));
+      });
+      out.push({ key: 'alloc', status: m.status.alloc, title: '再平衡',
+        text: '最大偏離 ' + fmtPct(m.allocDevMax, 1) + '，超過容許 ' + fmtPct(tol, 1) + '。' + parts.join('、') + '。' });
+    } else {
+      out.push({ key: 'alloc', status: 'ok', title: '配置', text: '各類偏離皆在容許 ' + fmtPct(tol, 1) + ' 內。' });
+    }
+  }
+  const order = { bad: 0, warn: 1, ok: 2, na: 3 };
+  return out.sort(function (a, b2) { return order[a.status] - order[b2.status]; });
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    APP_VERSION: APP_VERSION, SCHEMA_VERSION: SCHEMA_VERSION, STORAGE_KEY: STORAGE_KEY,
+    num: num, parseDate: parseDate, toDateStr: toDateStr, fmtNum: fmtNum, fmtPct: fmtPct, fmtCompact: fmtCompact,
+    defaultState: defaultState, emptyState: emptyState, deepMerge: deepMerge, normalizeState: normalizeState, migrateV0: migrateV0,
+    loanPayment: loanPayment, loanBalance: loanBalance, loanSummary: loanSummary, loanPaidCount: loanPaidCount,
+    amortSchedule: amortSchedule, monthsElapsed: monthsElapsed,
+    xirr: xirr, modifiedDietz: modifiedDietz, cagrFromCashflows: cagrFromCashflows, avgAnnualFromSnapshots: avgAnnualFromSnapshots,
+    computeAll: computeAll, weightedIrr: weightedIrr, realRate: realRate, project: project,
+    buildAdvice: buildAdvice, makeSnapshot: makeSnapshot, upsertSnapshot: upsertSnapshot
+  };
+}
+</script>
+
+<script id="ui">
+/* ==== [MODULE: DOM-UTIL] ==== */
+function $(sel) { return document.querySelector(sel); }
+function $all(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+function getPath(obj, path) {
+  return path.split('.').reduce(function (o, k) { return o == null ? undefined : o[k]; }, obj);
+}
+function setPath(obj, path, val) {
+  const ks = path.split('.');
+  let o = obj;
+  for (let i = 0; i < ks.length - 1; i++) { o = o[ks[i]]; if (o == null) return; }
+  o[ks[ks.length - 1]] = val;
+}
+function fmtInput(v) {
+  v = num(v);
+  if (v === 0) return '';
+  return v.toLocaleString('zh-TW', { maximumFractionDigits: 6 });
+}
+function debounce(fn, ms) {
+  let t = null;
+  return function () { clearTimeout(t); t = setTimeout(fn, ms); };
+}
+let toastTimer = null;
+function toast(msg) {
+  const el = $('#toast');
+  el.textContent = msg; el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { el.hidden = true; }, 1800);
+}
+const STATUS_LABEL = { ok: '良好', warn: '注意', bad: '危險', na: '' };
+
+/* ==== [MODULE: STORAGE] ==== */
+const Store = {
+  load: function () {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) return normalizeState(JSON.parse(raw));
+      const legacy = localStorage.getItem(LEGACY_V0_KEY);
+      if (legacy) return normalizeState(JSON.parse(legacy));
+    } catch (e) { /* fall through to defaults */ }
+    return defaultState();
+  },
+  save: function (s) {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch (e) { /* storage full or disabled */ }
+  }
+};
+
+/* ==== [MODULE: THEME] ==== */
+const Theme = {
+  current: function () { return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light'; },
+  apply: function (t) {
+    document.documentElement.setAttribute('data-theme', t);
+    $('#btnTheme').textContent = t === 'dark' ? '日間模式' : '夜間模式';
+  },
+  toggle: function () {
+    const t = Theme.current() === 'dark' ? 'light' : 'dark';
+    try { localStorage.setItem(THEME_KEY, t); } catch (e) {}
+    Theme.apply(t);
+    renderCharts();
+  },
+  init: function () {
+    Theme.apply(Theme.current());
+    if (window.matchMedia) {
+      const mq = window.matchMedia('(prefers-color-scheme: dark)');
+      const onChange = function (e) {
+        let stored = null;
+        try { stored = localStorage.getItem(THEME_KEY); } catch (err) {}
+        if (stored !== 'light' && stored !== 'dark') { Theme.apply(e.matches ? 'dark' : 'light'); renderCharts(); }
+      };
+      if (mq.addEventListener) mq.addEventListener('change', onChange); else if (mq.addListener) mq.addListener(onChange);
+    }
+  }
+};
+
+/* ==== [MODULE: APP-STATE] ==== */
+let S = null;
+let M = null;
+let P = null;
+const chartHidden = { proj: {}, hist: {} };
+
+/* ==== [MODULE: RENDER-INPUTS] ==== */
+function inNum(path, val, cls, label) {
+  return '<input class="in num ' + (cls || '') + '" type="text" inputmode="decimal" autocomplete="off" placeholder="0" data-path="' + path +
+    '" data-kind="num" value="' + esc(fmtInput(val)) + '"' + (label ? ' aria-label="' + esc(label) + '"' : '') + '>';
+}
+function inText(path, val, cls, ph) {
+  return '<input class="in ' + (cls || '') + '" type="text" autocomplete="off" data-path="' + path + '" data-kind="text" value="' + esc(val) +
+    '"' + (ph ? ' placeholder="' + esc(ph) + '" aria-label="' + esc(ph) + '"' : '') + '>';
+}
+function inDate(path, val, cls) {
+  return '<input class="in ' + (cls || '') + '" type="date" data-path="' + path + '" data-kind="text" value="' + esc(val) + '">';
+}
+function inCheck(path, val, label) {
+  return '<input type="checkbox" data-path="' + path + '" data-kind="bool"' + (val ? ' checked' : '') + (label ? ' aria-label="' + esc(label) + '"' : '') + '>';
+}
+function inSelect(path, val, options) {
+  return '<select class="in" data-path="' + path + '" data-kind="text">' + options.map(function (o) {
+    return '<option value="' + esc(o[0]) + '"' + (o[0] === val ? ' selected' : '') + '>' + esc(o[1]) + '</option>';
+  }).join('') + '</select>';
+}
+function field(label, inputHtml) { return '<label class="field">' + esc(label) + inputHtml + '</label>'; }
+
+function renderHoldings(kind) {
+  const usd = kind === 'us';
+  const cur = usd ? '(USD)' : '';
+  const rows = S[kind];
+  let h = '<thead><tr><th>代號</th><th>名稱</th><th class="r">股數</th><th class="r">均價' + cur + '</th><th class="r">現價' + cur +
+    '</th><th class="r">槓桿倍數</th><th class="c">質押</th><th class="r">官方年化 IRR(%)</th><th class="r">市值</th><th class="r">成本</th>' +
+    '<th class="r">損益</th><th class="r">漲跌幅</th><th></th></tr></thead><tbody>';
+  rows.forEach(function (r, i) {
+    const p = kind + '.' + i + '.';
+    h += '<tr>' +
+      '<td>' + inText(p + 'symbol', r.symbol, 'w-sym', '代號') + '</td>' +
+      '<td>' + inText(p + 'name', r.name, 'w-name', '名稱') + '</td>' +
+      '<td>' + inNum(p + 'shares', r.shares, 'w-num', '股數') + '</td>' +
+      '<td>' + inNum(p + 'avg', r.avg, 'w-num', '均價') + '</td>' +
+      '<td>' + inNum(p + 'price', r.price, 'w-num', '現價') + '</td>' +
+      '<td>' + inNum(p + 'lev', r.lev, 'w-sm', '槓桿倍數') + '</td>' +
+      '<td class="c">' + inCheck(p + 'pledged', r.pledged, '質押') + '</td>' +
+      '<td>' + inNum(p + 'irr', r.irr, 'w-sm', '官方年化 IRR') + '</td>' +
+      '<td class="r" id="' + kind + '-' + i + '-mv"></td>' +
+      '<td class="r" id="' + kind + '-' + i + '-cost"></td>' +
+      '<td class="r" id="' + kind + '-' + i + '-pl"></td>' +
+      '<td class="r" id="' + kind + '-' + i + '-ret"></td>' +
+      '<td><button class="btn small danger" data-act="del-row" data-list="' + kind + '" data-i="' + i + '">刪除</button></td></tr>';
+  });
+  if (!rows.length) h += '<tr><td colspan="13" class="empty">尚無標的</td></tr>';
+  h += '</tbody><tfoot><tr><td colspan="8">合計' + (usd ? '(TWD)' : '') + '</td><td class="r" id="' + kind + '-t-mv"></td><td class="r" id="' + kind +
+    '-t-cost"></td><td class="r" id="' + kind + '-t-pl"></td><td class="r" id="' + kind + '-t-ret"></td><td></td></tr></tfoot>';
+  $('#' + kind + 'Table').innerHTML = h;
+}
+function renderCashForm() {
+  $('#fxSlotUs').innerHTML = inNum('fx.usdTwd', S.fx.usdTwd, '', 'USD/TWD 匯率');
+  $('#cashForm').innerHTML = [
+    field('台幣現金', inNum('cash.twd', S.cash.twd)),
+    field('外幣現金 (USD)', inNum('cash.usd', S.cash.usd)),
+    field('USD/TWD 匯率', inNum('fx.usdTwd', S.fx.usdTwd)),
+    field('未動用信用額度', inNum('cash.unusedCredit', S.cash.unusedCredit)),
+    field('每月收入', inNum('cash.monthlyIncome', S.cash.monthlyIncome)),
+    field('每月必要支出', inNum('cash.monthlyExpense', S.cash.monthlyExpense))
+  ].join('');
+}
+function renderLoans() {
+  const types = LOAN_TYPES.map(function (t) { return [t, t]; });
+  let h = '';
+  S.loans.forEach(function (l, i) {
+    const p = 'loans.' + i + '.';
+    h += '<div class="loan"><div class="form-grid">' +
+      field('名稱', inText(p + 'name', l.name)) +
+      field('類型', inSelect(p + 'type', l.type, types)) +
+      field('原始借款金額', inNum(p + 'principal', l.principal)) +
+      field('年利率 (%)', inNum(p + 'rate', l.rate)) +
+      field('總期數（0 為只付息）', inNum(p + 'term', l.term)) +
+      field('已繳期數', inNum(p + 'paid', l.paid)) +
+      field('起貸日（選填）', inDate(p + 'startDate', l.startDate)) +
+      '</div><div class="loan-out">' +
+      '<div class="kv"><span id="loan-' + i + '-payL">每月還款</span><b id="loan-' + i + '-pay"></b></div>' +
+      '<div class="kv"><span>剩餘本金</span><b id="loan-' + i + '-bal"></b></div>' +
+      '<div class="kv"><span>已繳 / 剩餘期數</span><b id="loan-' + i + '-rem"></b></div>' +
+      '<div class="kv"><span>總利息</span><b id="loan-' + i + '-int"></b></div>' +
+      '</div><div class="loan-foot">' +
+      '<details class="amort" data-i="' + i + '"><summary>攤還表</summary><div class="amort-body"></div></details>' +
+      '<button class="btn small danger" data-act="del-row" data-list="loans" data-i="' + i + '">刪除</button>' +
+      '</div></div>';
+  });
+  if (!S.loans.length) h = '<div class="empty">尚無負債</div>';
+  $('#loanList').innerHTML = h;
+}
+function renderFlows() {
+  let h = '<thead><tr><th>日期</th><th>類型</th><th class="r">金額</th><th></th></tr></thead><tbody>';
+  S.cashflows.forEach(function (c, i) {
+    const p = 'cashflows.' + i + '.';
+    h += '<tr><td>' + inDate(p + 'date', c.date, 'w-date') + '</td><td>' + inSelect(p + 'type', c.type, [['in', '投入'], ['out', '提領']]) +
+      '</td><td>' + inNum(p + 'amount', c.amount, 'w-num', '金額') + '</td><td><button class="btn small danger" data-act="del-row" data-list="cashflows" data-i="' + i +
+      '">刪除</button></td></tr>';
+  });
+  if (!S.cashflows.length) h += '<tr><td colspan="4" class="empty">尚無紀錄</td></tr>';
+  $('#flowTable').innerHTML = h + '</tbody>';
+}
+function renderTargets() {
+  const t = 'targets.';
+  $('#targetForm').innerHTML = [
+    field('目標槓桿倍率', inNum(t + 'leverage', S.targets.leverage)),
+    field('槓桿容許區間 (倍)', inNum(t + 'levBand', S.targets.levBand)),
+    field('目標配置 台股 (%)', inNum(t + 'allocTw', S.targets.allocTw)),
+    field('目標配置 美股 (%)', inNum(t + 'allocUs', S.targets.allocUs)),
+    field('目標配置 現金 (%)', inNum(t + 'allocCash', S.targets.allocCash)),
+    field('偏離容許 (%)', inNum(t + 'allocTol', S.targets.allocTol)),
+    field('維持率警戒線 (%)', inNum(t + 'maintWarn', S.targets.maintWarn)),
+    field('斷頭線 (%)', inNum(t + 'maintCall', S.targets.maintCall)),
+    field('DSR 上限 (%)', inNum(t + 'dsrMax', S.targets.dsrMax)),
+    field('負債比上限 (%)', inNum(t + 'debtRatioMax', S.targets.debtRatioMax)),
+    field('預備金目標月數', inNum(t + 'reserveMonths', S.targets.reserveMonths)),
+    field('預備金目標金額（優先）', inNum(t + 'reserveAmount', S.targets.reserveAmount)),
+    field('通膨率 (%)', inNum(t + 'inflation', S.targets.inflation))
+  ].join('');
+}
+function renderProjControls() {
+  $('#projControls').innerHTML =
+    field('每月投入', inNum('projection.monthly', S.projection.monthly)) +
+    field('現金年化報酬率 (%)', inNum('projection.cashRate', S.projection.cashRate)) +
+    '<div class="seg" role="group" aria-label="名目或實質">' +
+    '<button data-act="proj-mode" data-real="0" class="' + (S.projection.real ? '' : 'on') + '">名目</button>' +
+    '<button data-act="proj-mode" data-real="1" class="' + (S.projection.real ? 'on' : '') + '">實質</button></div>';
+}
+function renderInputs() {
+  renderHoldings('tw'); renderHoldings('us'); renderCashForm(); renderLoans(); renderFlows(); renderTargets(); renderProjControls();
+}
+
+/* ==== [MODULE: RENDER-METRICS] ==== */
+const METRICS = [
+  { id: 'lev', title: '槓桿倍率', def: '<p>槓桿倍率 = 總曝險金額 / 資產淨值。</p><p>淨值小於或等於零時顯示危險。</p><p>位於「目標 ± 容許區間」內為良好；高於上限且未超過兩倍區間為注意，再高為危險；低於下限為注意。</p>' },
+  { id: 'exp', title: '總曝險金額', def: '<p>總曝險金額 = Σ(各標的市值 × 槓桿倍數)。</p><p>美股以 USD/TWD 匯率換算台幣；現金不計入曝險。</p>' },
+  { id: 'tw', title: '台股', def: '<p>市值 = Σ 股數 × 現價；成本 = Σ 股數 × 均價。</p><p>漲跌幅 = (市值 - 成本) / 成本。</p>' },
+  { id: 'us', title: '美股', def: '<p>市值與成本以 USD 計算後乘以 USD/TWD 匯率。</p><p>漲跌幅以 USD 計算 = (市值 - 成本) / 成本，不含匯差。</p>' },
+  { id: 'cash', title: '現金部位', def: '<p>現金部位 = 台幣現金 + 外幣現金 × USD/TWD 匯率。</p>' },
+  { id: 'debt', title: '負債', def: '<p>負債 = Σ 各筆剩餘本金。</p><p>本息平均攤還：每月還款 PMT = P × r(1+r)^n / ((1+r)^n - 1)，r 為月利率，n 為總期數。</p><p>剩餘本金 = P(1+r)^k - PMT × ((1+r)^k - 1) / r，k 為已繳期數。只付息者剩餘本金等於原始借款。</p>' },
+  { id: 'dr', title: '負債比', def: '<p>負債比 = 負債 / 資產總值。</p><p>超過上限為危險，達上限 90% 為注意。</p>' },
+  { id: 'ta', title: '資產總值', def: '<p>資產總值 = 台股市值 + 美股市值 + 現金部位。</p>' },
+  { id: 'nw', title: '資產淨值', def: '<p>資產淨值 = 資產總值 - 負債。</p>' },
+  { id: 'ret', title: '複合年化報酬 / 平均年化報酬', def: '<p>複合年化（CAGR）：以投入與提領紀錄計算 Modified Dietz 報酬率 R = (淨值 - 淨投入) / Σ(投入金額 × 權重)，權重 = 該筆距今天數 / 總天數；CAGR = (1 + R)^(1 / 年數) - 1，年數自第一筆紀錄起算至今天。</p><p>平均年化（算術）：相鄰兩筆快照為一段，各段以 Modified Dietz 計算報酬率 r（已扣除期間投入與提領），平均年化 = Σr / Σ天數 × 365。需至少兩筆快照。</p>' },
+  { id: 'mt', title: '維持率與斷頭安全距離', def: '<p>維持率 = 質押標的市值 / 質押與融資類負債剩餘本金。</p><p>斷頭安全距離 = 1 - 斷頭線 / 維持率，即擔保品市值可再下跌的幅度；距警戒線同理。</p><p>低於警戒線為危險；距警戒線跌幅小於 10% 為注意。</p>' },
+  { id: 'dev', title: '目標配置偏離度', def: '<p>各類偏離 = 實際佔比 - 目標佔比，實際佔比 = 部位市值 / 資產總值。</p><p>整體偏離 = Σ|各類偏離|。</p><p>最大單類偏離超過容許值為注意，超過兩倍為危險；目標加總不等於 100% 為注意。</p>' },
+  { id: 'dsr', title: '每月償債負擔率 DSR', def: '<p>DSR = 每月還款總額 / 每月收入。只付息負債以每月利息計。</p><p>超過上限為危險，達上限 90% 為注意。</p>' },
+  { id: 'dry', title: '備用資金 Dry Powder', def: '<p>Dry Powder = 現金部位 + 未動用信用額度。</p><p>可支應月數 = Dry Powder / (每月必要支出 + 每月還款)。</p><p>預備金目標 = 目標金額（有填時）或 目標月數 × (每月必要支出 + 每月還款)，以現金部位比較：達標為良好，達 50% 為注意，未達 50% 為危險。</p>' },
+  { id: 'xirr', title: 'XIRR', def: '<p>求解 Σ CF_i / (1 + r)^((d_i - d_0) / 365) = 0 的 r。</p><p>投入記為負、提領記為正，今日資產淨值為最後一筆正值。</p><p>先以牛頓法求解，未收斂時改用二分法。</p>' }
+];
+function buildMetricCards() {
+  $('#metrics').innerHTML = METRICS.map(function (d) {
+    return '<article class="metric" id="m-' + d.id + '"><div class="metric-head"><h3>' + esc(d.title) + '</h3><span class="badge" id="m-' + d.id +
+      '-badge"></span></div><div class="metric-value" id="m-' + d.id + '-val"></div><div class="metric-sub" id="m-' + d.id + '-sub"></div>' +
+      '<details class="def"><summary>定義</summary><div class="def-body">' + d.def + '</div></details></article>';
+  }).join('');
+}
+function money(n) { return fmtNum(n, 0) + '<span class="unit">TWD</span>'; }
+function retSpan(x) {
+  if (x == null || !isFinite(x)) return '無資料';
+  const r = Math.round(x * 10000);
+  return '<span class="' + (r > 0 ? 'up' : r < 0 ? 'down' : '') + '">' + fmtSignedPct(x) + '</span>';
+}
+function setMetric(id, value, sub, status) {
+  const card = $('#m-' + id);
+  card.setAttribute('data-status', status || 'na');
+  $('#m-' + id + '-val').innerHTML = value;
+  $('#m-' + id + '-sub').innerHTML = sub || '';
+  const b = $('#m-' + id + '-badge');
+  b.className = 'badge s-' + (status || 'na');
+  b.textContent = STATUS_LABEL[status || 'na'] || '';
+}
+function renderMetrics() {
+  const t = S.targets, st = M.status;
+  const T = num(t.leverage), b = Math.abs(num(t.levBand));
+  setMetric('lev', M.leverage == null ? (M.netWorth <= 0 && (M.exposure > 0 || M.netWorth < 0) ? '危險' : '無資料') : fmtNum(M.leverage, 2) + '<span class="unit">倍</span>',
+    '目標 ' + fmtNum(T, 2) + ' 倍（' + fmtNum(Math.max(0, T - b), 2) + ' 至 ' + fmtNum(T + b, 2) + '）', st.leverage);
+  setMetric('exp', money(M.exposure), '台股 ' + fmtNum(M.twExp) + '<br>美股 ' + fmtNum(M.usExp));
+  setMetric('tw', money(M.twMV), '成本 ' + fmtNum(M.twCost) + '<br>漲跌幅 ' + retSpan(M.twRet));
+  setMetric('us', money(M.usMV), '成本 ' + fmtNum(M.usCost) + '<br>漲跌幅 ' + retSpan(M.usRet) + '（USD ' + fmtNum(M.usMVUsd, 0) + '）');
+  setMetric('cash', money(M.cash), '台幣 ' + fmtNum(M.cashTwd) + '<br>外幣 ' + fmtNum(M.cashUsd));
+  setMetric('debt', money(M.debt), '每月還款 ' + fmtNum(M.monthlyDebt) + '<br>加權利率 ' + fmtPct(M.avgDebtRate));
+  setMetric('dr', M.debtRatio == null ? '危險' : fmtPct(M.debtRatio, 1), '上限 ' + fmtNum(t.debtRatioMax, 1) + '%', st.debtRatio);
+  setMetric('ta', money(M.totalAssets), '');
+  setMetric('nw', money(M.netWorth), '淨投入 ' + fmtNum(M.netContribution));
+  setMetric('ret', M.cagr ? fmtSignedPct(M.cagr.cagr) : '無資料',
+    (M.cagr ? '累計 ' + fmtSignedPct(M.cagr.totalReturn) + '，' + fmtNum(M.cagr.years, 1) + ' 年<br>' : '') +
+    '平均年化 ' + (M.avgAnnual ? fmtSignedPct(M.avgAnnual.arithmetic) : '需至少兩筆快照'));
+  if (M.maint == null) setMetric('mt', '無質押負債', '質押市值 ' + fmtNum(M.pledgedMV), 'na');
+  else setMetric('mt', fmtNum(M.maint * 100, 1) + '%', '斷頭安全距離 ' + fmtPct(M.dropToCall, 1) + '<br>距警戒線 ' + fmtPct(M.dropToWarn, 1), st.maint);
+  setMetric('dev', fmtPct(M.allocDevTotal, 1), M.alloc.map(function (c) { return c.name + ' ' + fmtSignedPct(c.dev, 1); }).join('<br>'), st.alloc);
+  setMetric('dsr', M.dsr == null ? '危險' : fmtPct(M.dsr, 1), '每月還款 ' + fmtNum(M.monthlyDebt) + '<br>上限 ' + fmtNum(t.dsrMax, 1) + '%', st.dsr);
+  setMetric('dry', money(M.dryPowder), (M.dryMonths != null ? '可支應 ' + fmtNum(M.dryMonths, 1) + ' 個月<br>' : '') +
+    (M.reserveTarget > 0 ? '預備金目標 ' + fmtNum(M.reserveTarget) : ''), st.reserve);
+  setMetric('xirr', M.xirr == null ? '無資料' : fmtSignedPct(M.xirr), '現金流 ' + M.contributions.length + ' 筆');
+}
+
+/* ==== [MODULE: RENDER-OUTPUTS] ==== */
+function setText(id, html) { const el = document.getElementById(id); if (el) el.innerHTML = html; }
+function renderRowOutputs() {
+  ['tw', 'us'].forEach(function (kind) {
+    M[kind].forEach(function (h, i) {
+      setText(kind + '-' + i + '-mv', fmtNum(h.mv));
+      setText(kind + '-' + i + '-cost', fmtNum(h.cost));
+      setText(kind + '-' + i + '-pl', fmtSigned(h.pl));
+      setText(kind + '-' + i + '-ret', retSpan(h.ret));
+    });
+    const mv = kind === 'tw' ? M.twMV : M.usMV, cost = kind === 'tw' ? M.twCost : M.usCost;
+    setText(kind + '-t-mv', fmtNum(mv));
+    setText(kind + '-t-cost', fmtNum(cost));
+    setText(kind + '-t-pl', fmtSigned(mv - cost));
+    setText(kind + '-t-ret', retSpan(kind === 'tw' ? M.twRet : M.usRet));
+  });
+  M.loans.forEach(function (l, i) {
+    setText('loan-' + i + '-payL', l.interestOnly ? '每月利息' : '每月還款');
+    setText('loan-' + i + '-pay', fmtNum(l.payment));
+    setText('loan-' + i + '-bal', fmtNum(l.balance));
+    setText('loan-' + i + '-rem', l.interestOnly ? '只付息' : l.paid + ' / ' + l.remainingTerms);
+    setText('loan-' + i + '-int', l.interestOnly ? '不適用' : fmtNum(l.totalInterest));
+  });
+  $all('details.amort[open]').forEach(renderAmort);
+  const sum = M.allocTargetSum, okSum = Math.abs(sum - 100) <= 0.01;
+  const el = $('#allocSum');
+  el.className = 'sum-line s-' + (okSum ? 'ok' : 'bad');
+  el.textContent = '目標配置加總 ' + fmtNum(sum, 1) + '%' + (okSum ? '' : '，需為 100%');
+}
+function renderAmort(det) {
+  const i = +det.getAttribute('data-i');
+  const l = S.loans[i];
+  const body = det.querySelector('.amort-body');
+  if (!l || !body) return;
+  const n = Math.round(num(l.term));
+  if (n <= 0) { body.innerHTML = '<div class="empty">只付息，無攤還表</div>'; return; }
+  const rows = amortSchedule(l.principal, l.rate, n);
+  if (!rows.length) { body.innerHTML = '<div class="empty">尚無資料</div>'; return; }
+  const paid = M.loans[i] ? M.loans[i].paid : 0;
+  body.innerHTML = '<table><thead><tr><th>期數</th><th class="r">還款金額</th><th class="r">利息</th><th class="r">本金</th><th class="r">剩餘本金</th></tr></thead><tbody>' +
+    rows.map(function (r) {
+      return '<tr' + (r.period === paid ? ' class="hl"' : '') + '><td>' + r.period + '</td><td class="r">' + fmtNum(r.payment) + '</td><td class="r">' +
+        fmtNum(r.interest) + '</td><td class="r">' + fmtNum(r.principal) + '</td><td class="r">' + fmtNum(r.balance) + '</td></tr>';
+    }).join('') + '</tbody></table>';
+}
+function renderAdvice() {
+  const list = buildAdvice(M, S.targets);
+  $('#advice').innerHTML = list.length ? list.map(function (a) {
+    return '<div class="advice-item s-' + a.status + '"><div class="advice-head"><span class="badge s-' + a.status + '">' + STATUS_LABEL[a.status] +
+      '</span><strong>' + esc(a.title) + '</strong></div><p>' + esc(a.text) + '</p></div>';
+  }).join('') : '<div class="empty">尚無資料</div>';
+}
+const CLASS_COLORS = { tw: 'var(--c1)', us: 'var(--c2)', cash: 'var(--c3)' };
+function stackSvg(parts) {
+  let x = 0;
+  const rects = parts.map(function (p) {
+    const w = Math.max(0, p.w * 100);
+    const r = '<rect x="' + x.toFixed(3) + '" y="0" width="' + w.toFixed(3) + '" height="10" style="fill:' + p.color + '"></rect>';
+    x += w;
+    return r;
+  }).join('');
+  return '<svg class="stackbar" viewBox="0 0 100 10" preserveAspectRatio="none" role="img"><rect x="0" y="0" width="100" height="10" style="fill:var(--border)"></rect>' + rects + '</svg>';
+}
+function renderAlloc() {
+  const ta = M.totalAssets;
+  const sum = M.alloc.reduce(function (a, c) { return a + c.target; }, 0) || 1;
+  let h = '<div class="stack-row"><span>實際</span>' + stackSvg(M.alloc.map(function (c) { return { w: ta > 0 ? c.value / ta : 0, color: CLASS_COLORS[c.key] }; })) + '</div>' +
+    '<div class="stack-row"><span>目標</span>' + stackSvg(M.alloc.map(function (c) { return { w: c.target / Math.max(sum, 1), color: CLASS_COLORS[c.key] }; })) + '</div>';
+  h += '<div class="table-wrap"><table><thead><tr><th>類別</th><th class="r">金額</th><th class="r">實際</th><th class="r">目標</th><th class="r">偏離</th><th class="r">再平衡金額</th></tr></thead><tbody>' +
+    M.alloc.map(function (c) {
+      return '<tr><td><span class="swatch" style="background:' + CLASS_COLORS[c.key] + ';margin-right:6px"></span>' + c.name + '</td><td class="r">' + fmtNum(c.value) +
+        '</td><td class="r">' + fmtPct(c.actual, 1) + '</td><td class="r">' + fmtPct(c.target, 1) + '</td><td class="r">' + fmtSignedPct(c.dev, 1) +
+        '</td><td class="r">' + fmtSigned(c.rebalance) + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+  $('#alloc').innerHTML = h;
+}
+function computeProjection() {
+  return project({
+    assets: M.totalAssets, loans: S.loans, today: M.today, rate: M.weightedIrr,
+    inflation: num(S.targets.inflation) / 100, real: S.projection.real, monthly: S.projection.monthly, years: 30
+  });
+}
+function renderProjection() {
+  const infl = num(S.targets.inflation) / 100;
+  $('#projRate').innerHTML = '加權名目年化報酬率 <b>' + fmtPct(M.weightedIrr) + '</b>，實質 <b>' + fmtPct(realRate(M.weightedIrr, infl)) +
+    '</b>（通膨 ' + fmtPct(infl, 1) + '）';
+  const yr0 = +M.today.slice(0, 4);
+  const marks = [5, 10, 15, 20, 25, 30];
+  let h = '<thead><tr><th>年</th><th>西元</th><th class="r">資產</th><th class="r">負債</th><th class="r">淨值</th></tr></thead><tbody>';
+  [0].concat(marks).forEach(function (y) {
+    const r = P.rows[y];
+    if (!r) return;
+    h += '<tr' + (y % 10 === 0 && y > 0 ? ' class="hl"' : '') + '><td>' + (y === 0 ? '現在' : '第 ' + y + ' 年') + '</td><td>' + (yr0 + y) + '</td><td class="r">' +
+      fmtNum(r.assets) + '</td><td class="r">' + fmtNum(r.debt) + '</td><td class="r">' + fmtNum(r.netWorth) + '</td></tr>';
+  });
+  $('#projTable').innerHTML = h + '</tbody>';
+}
+function renderHistoryTable() {
+  const rows = S.snapshots.slice().reverse();
+  let h = '<thead><tr><th>日期</th><th class="r">台股</th><th class="r">美股</th><th class="r">現金</th><th class="r">負債</th><th class="r">淨值</th><th class="r">總資產</th><th></th></tr></thead><tbody>';
+  rows.forEach(function (s) {
+    h += '<tr><td>' + esc(s.date) + '</td><td class="r">' + fmtNum(s.tw) + '</td><td class="r">' + fmtNum(s.us) + '</td><td class="r">' + fmtNum(s.cash) +
+      '</td><td class="r">' + fmtNum(s.debt) + '</td><td class="r">' + fmtNum(s.netWorth) + '</td><td class="r">' + fmtNum(s.totalAssets) +
+      '</td><td><button class="btn small danger" data-act="del-snap" data-date="' + esc(s.date) + '">刪除</button></td></tr>';
+  });
+  if (!rows.length) h += '<tr><td colspan="8" class="empty">尚無快照</td></tr>';
+  $('#histTable').innerHTML = h + '</tbody>';
+}
+
+/* ==== [MODULE: CHART] ==== */
+function niceTicks(min, max, count) {
+  const span = max - min;
+  if (!(span > 0)) return [min, min + 1];
+  const raw = span / Math.max(1, count);
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const nrm = raw / mag;
+  const step = (nrm <= 1 ? 1 : nrm <= 2 ? 2 : nrm <= 2.5 ? 2.5 : nrm <= 5 ? 5 : 10) * mag;
+  const lo = Math.floor(min / step) * step, hi = Math.ceil(max / step) * step;
+  const out = [];
+  for (let v = lo; v <= hi + step * 1e-6; v += step) out.push(Math.abs(v) < step * 1e-6 ? 0 : v);
+  return out;
+}
+/* cfg: {id, xs, series:[{key,name,color,values,width}], xTicks, xLabel, tipTitle, markers:[{x,key}], emptyText} */
+function lineChart(el, cfg) {
+  if (!el) return;
+  const xs = cfg.xs || [];
+  if (!xs.length) { el.innerHTML = '<div class="empty">' + esc(cfg.emptyText || '尚無資料') + '</div>'; return; }
+  const hidden = chartHidden[cfg.id] || {};
+  const series = cfg.series.filter(function (s) { return !hidden[s.key]; });
+  const W = Math.max(280, Math.floor(el.clientWidth || 600));
+  const H = W < 520 ? 220 : 280;
+  let ymin = 0, ymax = 0;
+  series.forEach(function (s) { s.values.forEach(function (v) { if (isFinite(v)) { ymin = Math.min(ymin, v); ymax = Math.max(ymax, v); } }); });
+  if (ymax === ymin) ymax = ymin + 1;
+  const ticks = niceTicks(ymin, ymax, 4);
+  const y0 = ticks[0], y1 = ticks[ticks.length - 1];
+  const labels = ticks.map(fmtCompact);
+  const padL = Math.max.apply(null, labels.map(function (l) { return l.length; })) * 7 + 12;
+  const padR = 16, padT = 18, padB = 24;
+  const xmin = xs[0], xmax = xs[xs.length - 1], xr = (xmax - xmin) || 1;
+  const X = function (x) { return xs.length === 1 ? padL + (W - padL - padR) / 2 : padL + (x - xmin) / xr * (W - padL - padR); };
+  const Y = function (v) { return padT + (1 - (v - y0) / (y1 - y0)) * (H - padT - padB); };
+  let svg = '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H + '" role="img">';
+  ticks.forEach(function (tv, i) {
+    const y = Y(tv).toFixed(1);
+    svg += '<line class="grid" x1="' + padL + '" x2="' + (W - padR) + '" y1="' + y + '" y2="' + y + '"></line>' +
+      '<text class="axis" x="' + (padL - 6) + '" y="' + (+y + 4) + '" text-anchor="end">' + esc(labels[i]) + '</text>';
+  });
+  let xt = cfg.xTicks;
+  if (!xt) {
+    const k = Math.min(xs.length, W < 520 ? 4 : 6);
+    xt = [];
+    for (let i = 0; i < k; i++) xt.push(xs[Math.round(i * (xs.length - 1) / Math.max(1, k - 1))]);
+    xt = xt.filter(function (v, i, a) { return a.indexOf(v) === i; });
+  }
+  xt.forEach(function (x, i) {
+    const anchor = xt.length > 1 && i === 0 ? 'start' : (xt.length > 1 && i === xt.length - 1 ? 'end' : 'middle');
+    svg += '<text class="axis" x="' + X(x).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="' + (xs.length === 1 ? 'middle' : anchor) + '">' + esc(cfg.xLabel(x)) + '</text>';
+  });
+  series.forEach(function (s) {
+    const pts = s.values.map(function (v, i) { return X(xs[i]).toFixed(1) + ',' + Y(v).toFixed(1); });
+    if (pts.length === 1) svg += '<circle cx="' + pts[0].split(',')[0] + '" cy="' + pts[0].split(',')[1] + '" r="3.5" style="fill:' + s.color + '"></circle>';
+    else svg += '<polyline points="' + pts.join(' ') + '" style="fill:none;stroke:' + s.color + ';stroke-width:' + (s.width || 2) + ';stroke-linejoin:round"></polyline>';
+  });
+  (cfg.markers || []).forEach(function (mk) {
+    const s = series.find(function (q) { return q.key === mk.key; });
+    if (!s) return;
+    const i = xs.indexOf(mk.x);
+    if (i < 0) return;
+    const cx = X(mk.x), cy = Y(s.values[i]);
+    svg += '<circle cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="4" style="fill:var(--surface);stroke:' + s.color + ';stroke-width:2"></circle>' +
+      '<text class="mlabel" x="' + cx.toFixed(1) + '" y="' + Math.max(11, cy - 8).toFixed(1) + '" text-anchor="' + (cx > W - 40 ? 'end' : 'middle') + '">' + esc(fmtCompact(s.values[i])) + '</text>';
+  });
+  svg += '<line class="hover-line" x1="0" x2="0" y1="' + padT + '" y2="' + (H - padB) + '" visibility="hidden"></line>';
+  series.forEach(function (s) { svg += '<circle class="hover-dot" r="4" cx="0" cy="0" visibility="hidden" style="fill:' + s.color + '"></circle>'; });
+  svg += '</svg>';
+  const legend = '<div class="legend">' + cfg.series.map(function (s) {
+    return '<button class="legend-item' + (hidden[s.key] ? ' off' : '') + '" data-act="legend" data-chart="' + cfg.id + '" data-key="' + s.key + '"><span class="swatch" style="background:' +
+      s.color + '"></span>' + esc(s.name) + '</button>';
+  }).join('') + '</div>';
+  el.innerHTML = '<div class="chart-box">' + svg + '<div class="chart-tip" hidden></div></div>' + legend;
+
+  const svgEl = el.querySelector('svg'), tip = el.querySelector('.chart-tip');
+  const hl = svgEl.querySelector('.hover-line'), dots = svgEl.querySelectorAll('.hover-dot');
+  const move = function (e) {
+    const rect = svgEl.getBoundingClientRect();
+    if (!rect.width) return;
+    const px = (e.clientX - rect.left) * W / rect.width;
+    let best = 0, bd = Infinity;
+    xs.forEach(function (x, i) { const d = Math.abs(X(x) - px); if (d < bd) { bd = d; best = i; } });
+    const cx = X(xs[best]);
+    hl.setAttribute('x1', cx); hl.setAttribute('x2', cx); hl.setAttribute('visibility', 'visible');
+    series.forEach(function (s, j) {
+      dots[j].setAttribute('cx', cx); dots[j].setAttribute('cy', Y(s.values[best])); dots[j].setAttribute('visibility', 'visible');
+    });
+    tip.innerHTML = '<div class="tip-title">' + esc(cfg.tipTitle(xs[best])) + '</div>' + series.map(function (s) {
+      return '<div><span class="swatch" style="background:' + s.color + '"></span>' + esc(s.name) + ' ' + fmtNum(s.values[best]) + '</div>';
+    }).join('');
+    tip.hidden = false;
+    const sc = rect.width / W;
+    let left = cx * sc + 12;
+    if (left + tip.offsetWidth > rect.width) left = cx * sc - tip.offsetWidth - 12;
+    tip.style.left = Math.max(0, left) + 'px';
+  };
+  const hide = function () {
+    tip.hidden = true; hl.setAttribute('visibility', 'hidden');
+    for (let j = 0; j < dots.length; j++) dots[j].setAttribute('visibility', 'hidden');
+  };
+  svgEl.addEventListener('pointermove', move);
+  svgEl.addEventListener('pointerdown', move);
+  svgEl.addEventListener('pointerleave', hide);
+}
+function renderProjChart() {
+  const yr0 = +M.today.slice(0, 4);
+  lineChart($('#projChart'), {
+    id: 'proj',
+    xs: P.rows.map(function (r) { return r.year; }),
+    series: [
+      { key: 'nw', name: '淨值', color: 'var(--c1)', width: 2.5, values: P.rows.map(function (r) { return r.netWorth; }) },
+      { key: 'assets', name: '資產', color: 'var(--c3)', width: 1.5, values: P.rows.map(function (r) { return r.assets; }) },
+      { key: 'debt', name: '負債', color: 'var(--c4)', width: 1.5, values: P.rows.map(function (r) { return r.debt; }) }
+    ],
+    xTicks: [0, 5, 10, 15, 20, 25, 30],
+    xLabel: function (y) { return y === 0 ? '現在' : y + '年'; },
+    tipTitle: function (y) { return (y === 0 ? '現在' : '第 ' + y + ' 年') + '（' + (yr0 + y) + '）'; },
+    markers: [{ x: 10, key: 'nw' }, { x: 20, key: 'nw' }, { x: 30, key: 'nw' }]
+  });
+}
+function renderHistChart() {
+  const snaps = S.snapshots.filter(function (s) { return parseDate(s.date) != null; });
+  const xs = snaps.map(function (s) { return parseDate(s.date); });
+  const sameYear = xs.length && toDateStr(xs[0]).slice(0, 4) === toDateStr(xs[xs.length - 1]).slice(0, 4);
+  const col = function (k) { return snaps.map(function (s) { return num(s[k]); }); };
+  lineChart($('#histChart'), {
+    id: 'hist', xs: xs, emptyText: '尚無快照',
+    series: [
+      { key: 'totalAssets', name: '總資產', color: 'var(--c6)', values: col('totalAssets') },
+      { key: 'netWorth', name: '淨值', color: 'var(--c1)', width: 2.5, values: col('netWorth') },
+      { key: 'tw', name: '台股', color: 'var(--c5)', values: col('tw') },
+      { key: 'us', name: '美股', color: 'var(--c2)', values: col('us') },
+      { key: 'cash', name: '現金', color: 'var(--c3)', values: col('cash') },
+      { key: 'debt', name: '負債', color: 'var(--c4)', values: col('debt') }
+    ],
+    xLabel: function (x) { const d = toDateStr(x); return sameYear ? d.slice(5).replace('-', '/') : d.slice(0, 7).replace('-', '/'); },
+    tipTitle: function (x) { return toDateStr(x); }
+  });
+}
+function renderCharts() {
+  if (!M) return;
+  renderProjChart();
+  renderHistChart();
+}
+
+/* ==== [MODULE: UPDATE] ==== */
+let updatePending = false;
+function scheduleUpdate() {
+  if (updatePending) return;
+  updatePending = true;
+  requestAnimationFrame(function () { updatePending = false; update(); });
+}
+function update() {
+  M = computeAll(S, todayStr());
+  P = computeProjection();
+  renderMetrics();
+  renderRowOutputs();
+  renderAdvice();
+  renderAlloc();
+  renderProjection();
+  renderHistoryTable();
+  renderCharts();
+  Store.save(S);
+}
+function renderAll() { renderInputs(); update(); }
+
+/* ==== [MODULE: IO] ==== */
+function exportJson() {
+  const blob = new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'finTracker-' + todayStr() + '.json';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+function importJsonFile(file) {
+  const reader = new FileReader();
+  reader.onload = function () {
+    try {
+      const raw = JSON.parse(String(reader.result));
+      if (!isObj(raw)) throw new Error('bad');
+      S = normalizeState(raw);
+      renderAll();
+      toast('已匯入資料');
+    } catch (e) {
+      toast('匯入失敗：檔案格式不正確');
+    }
+  };
+  reader.readAsText(file);
+}
+
+/* ==== [MODULE: EVENTS] ==== */
+const ROW_TEMPLATES = { tw: holdingTemplate, us: holdingTemplate, loans: loanTemplate, cashflows: flowTemplate };
+const ROW_RENDER = { tw: function () { renderHoldings('tw'); }, us: function () { renderHoldings('us'); }, loans: renderLoans, cashflows: renderFlows };
+function onFieldInput(el) {
+  const path = el.getAttribute('data-path');
+  const kind = el.getAttribute('data-kind');
+  let v;
+  if (kind === 'num') v = num(el.value);
+  else if (kind === 'bool') v = !!el.checked;
+  else v = el.value;
+  setPath(S, path, v);
+  $all('[data-path="' + path + '"]').forEach(function (o) {
+    if (o !== el && kind === 'num') o.value = fmtInput(v);
+  });
+  scheduleUpdate();
+}
+function bindEvents() {
+  document.addEventListener('input', function (e) {
+    const el = e.target;
+    if (el && el.hasAttribute && el.hasAttribute('data-path')) onFieldInput(el);
+  });
+  document.addEventListener('change', function (e) {
+    const el = e.target;
+    if (el && el.hasAttribute && el.hasAttribute('data-path') && (el.type === 'checkbox' || el.tagName === 'SELECT' || el.type === 'date')) onFieldInput(el);
+  });
+  document.addEventListener('focusout', function (e) {
+    const el = e.target;
+    if (el && el.getAttribute && el.getAttribute('data-kind') === 'num') el.value = fmtInput(num(el.value));
+  });
+  document.addEventListener('toggle', function (e) {
+    const el = e.target;
+    if (el && el.classList && el.classList.contains('amort') && el.open && M) renderAmort(el);
+  }, true);
+  document.addEventListener('click', function (e) {
+    const btn = e.target.closest ? e.target.closest('[data-act]') : null;
+    if (!btn) return;
+    const act = btn.getAttribute('data-act');
+    const list = btn.getAttribute('data-list');
+    if (act === 'add-row' && ROW_TEMPLATES[list]) {
+      const row = ROW_TEMPLATES[list]();
+      if (list === 'cashflows') row.date = todayStr();
+      if (list === 'loans') row.name = '負債 ' + (S.loans.length + 1);
+      S[list].push(row);
+      ROW_RENDER[list]();
+      update();
+    } else if (act === 'del-row' && ROW_TEMPLATES[list]) {
+      const i = +btn.getAttribute('data-i');
+      S[list].splice(i, 1);
+      ROW_RENDER[list]();
+      update();
+    } else if (act === 'del-snap') {
+      const d = btn.getAttribute('data-date');
+      S.snapshots = S.snapshots.filter(function (s) { return s.date !== d; });
+      update();
+    } else if (act === 'snapshot') {
+      const snap = makeSnapshot(M, todayStr());
+      S.snapshots = upsertSnapshot(S.snapshots, snap);
+      update();
+      toast('已記錄 ' + snap.date + ' 快照');
+    } else if (act === 'theme') {
+      Theme.toggle();
+    } else if (act === 'proj-mode') {
+      S.projection.real = btn.getAttribute('data-real') === '1';
+      renderProjControls();
+      update();
+    } else if (act === 'legend') {
+      const c = btn.getAttribute('data-chart'), k = btn.getAttribute('data-key');
+      chartHidden[c][k] = !chartHidden[c][k];
+      renderCharts();
+    } else if (act === 'export') {
+      exportJson();
+    } else if (act === 'import') {
+      $('#importFile').click();
+    } else if (act === 'reset') {
+      if (confirm('確定要重設為範例資料？目前資料將被取代。')) { S = defaultState(); renderAll(); toast('已重設為範例資料'); }
+    } else if (act === 'clear') {
+      if (confirm('確定要清空所有持股、負債、紀錄與快照？目標設定將保留。')) {
+        const e2 = emptyState();
+        e2.targets = S.targets; e2.fx = S.fx; e2.projection = S.projection;
+        S = normalizeState(e2);
+        renderAll();
+        toast('已清空資料');
+      }
+    }
+  });
+  $('#importFile').addEventListener('change', function (e) {
+    const f = e.target.files && e.target.files[0];
+    if (f) importJsonFile(f);
+    e.target.value = '';
+  });
+  window.addEventListener('resize', debounce(renderCharts, 150));
+}
+
+/* ==== [MODULE: INIT] ==== */
+(function init() {
+  S = Store.load();
+  Theme.init();
+  buildMetricCards();
+  bindEvents();
+  renderAll();
+  $('#footer').textContent = '財務追蹤器 ' + APP_VERSION;
+})();
+</script>
+</body>
+</html>
