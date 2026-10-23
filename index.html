@@ -190,9 +190,17 @@ td select.in { width: auto; }
 .stackbar { display: block; width: 100%; height: 22px; border-radius: 6px; overflow: hidden; }
 .stack-row { display: grid; grid-template-columns: 40px 1fr; gap: 8px; align-items: center; margin-bottom: 8px; font-size: 12px; color: var(--muted); }
 .proj-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 12px; }
-.proj-controls .field { width: 150px; }
+.proj-controls .field { width: 155px; }
+.proj-controls .field.w-wide { width: 190px; }
 .proj-rate { font-size: 13px; color: var(--muted); margin: 0 0 8px; }
 .proj-rate b { color: var(--text); }
+.dca-box { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+.dca-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.dca-head h3 { font-size: 14px; margin: 0; font-weight: 600; color: var(--text); }
+.dca-note { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+input.in::placeholder { color: var(--muted); opacity: 0.65; }
+input.in.is-ref { color: var(--muted); }
+.ref-tag { display: block; font-size: 11px; color: var(--muted); text-align: right; margin-top: 2px; line-height: 1.2; }
 .sum-line { font-size: 12px; margin-top: 8px; }
 .sum-line.s-bad { color: var(--bad); }
 .sum-line.s-ok { color: var(--ok); }
@@ -247,6 +255,17 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; padding:
 
   <section id="sec-projection" class="card">
     <h2>未來預測</h2>
+    <div class="dca-box">
+      <div class="dca-head">
+        <h3>定期定額設定（含台股與美股複委託）</h3>
+        <div class="row-actions" style="margin-top:0">
+          <button class="btn small" data-act="add-row" data-list="dcaTw">新增台股定期定額</button>
+          <button class="btn small" data-act="add-row" data-list="dcaUs">新增美股複委託</button>
+        </div>
+      </div>
+      <p class="dca-note">0050 預設參考值：成立以來公告複合年化報酬率約 <b>11.8%</b>（留空或填 0 時自動以淺色 0050 參考值代入計算）、平均現金殖利率約 <b>3.5%</b>、境內股利所得（54C）佔比約 <b>60%</b>。美股複委託以 USD 扣款並依 USD/TWD 匯率折算台幣。</p>
+      <div class="table-wrap"><table id="dcaTable"></table></div>
+    </div>
     <div class="proj-controls" id="projControls"></div>
     <p class="proj-rate" id="projRate"></p>
     <div class="chart" id="projChart"></div>
@@ -254,10 +273,12 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; padding:
     <details class="def">
       <summary>定義</summary>
       <div class="def-body">
-        <p>加權年化報酬率 = [Σ(標的市值 × 官方年化 IRR) + 現金部位 × 現金年化報酬率] / 資產總值。</p>
-        <p>實質報酬率 = (1 + 名目報酬率) / (1 + 通膨率) - 1。</p>
-        <p>資產每月以 (1 + 年化報酬率)^(1/12) - 1 成長，並加上每月投入。負債依各筆攤還表取剩餘本金，只付息者維持原額；每月還款視為由收入支付，不自資產扣除。</p>
-        <p>淨值 = 資產 - 負債。實質模式下，資產以實質報酬率成長、每月投入視為固定購買力，負債以通膨率折現。</p>
+        <p><b>現有部位加權年化報酬率</b> = [Σ(標的市值 × 官方年化 IRR) + 現金部位 × 現金年化報酬率] / 資產總值。各定期定額計畫則依該標的設定之「公告複合年化報酬率」（台股未填時預設採用 0050 成立以來公告複合年化報酬率 11.8% 參考值）獨立複利累積。</p>
+        <p><b>實質報酬率</b> = (1 + 名目報酬率) / (1 + 通膨率) - 1。實質模式下，各部位與定期定額皆以實質報酬率成長、每月扣款視為固定購買力，負債與稅費門檻以通膨折算。</p>
+        <p><b>富邦證券定期定額手續費模型</b>：台股定期定額法定牌告 0.1425%，富邦現行電子優惠約 1 折（0.01425%），單筆手續費無條件捨去小數點並設有最低收費 1 元（故單筆扣款 14,035 元以內手續費皆僅 1 元），公式為 <code>max(最低手續費, floor(扣款金額 × 0.1425% × 折數 / 10))</code>；美股複委託定期定額富邦現行買進優惠費率為 <b>0.1%</b> 且<b>無最低手續費門檻（無低收）</b>，公式為 <code>扣款金額(USD) × 費率% × 匯率</code>。每月扣款先扣除手續費後再計入投資本金。</p>
+        <p><b>台灣股利法遵稅務與二代健保補充保費（54C 境內股利所得）</b>：針對台股部位（現有台股以 0050 預設參數估算 + 台股定期定額部位），每年預估現金股利 = <code>台股部位市值 × 平均現金殖利率%</code>；其中屬境內股利所得（54C）金額 = <code>年現金股利 × 境內所得佔比%</code>（0050 約 60% 為 54C 境內股利所得，其餘約 40% 為資本利得／平準金免計綜所稅與補充保費）。</p>
+        <p><b>二代健保補充保費（2.11%）</b>：依健保法規定，單次給付 54C 境內股利達 <b>NT$20,000</b>（含）以上（0050 為半年配，每年配息 2 次，單次上限 1,000 萬元），課徵 <b>2.11%</b> 補充保費：若 <code>(年 54C 股利 / 年配息次數) &gt;= 20,000</code>，年補充保費 = <code>min(單次 54C 股利, 10,000,000) × 2.11% × 年配息次數</code>。</p>
+        <p><b>54C 股利可抵減稅額（8.5%）</b>：依所得稅法規定，54C 境內股利併入綜合所得稅申報時，享有 <b>8.5% 可抵減稅額</b>（每申報戶每年抵減上限 <b>NT$80,000</b>），即 <code>min(80,000, 年 54C 股利 × 8.5%)</code>。年度台股股利稅費淨調整 = <code>+ 54C 股利抵減稅額(8.5%) - 二代健保補充保費(2.11%)</code>，於每年底併入台股資產部位複利滾存。</p>
       </div>
     </details>
   </section>
@@ -323,14 +344,25 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; padding:
 
 <script id="core">
 /* ==== [MODULE: CONFIG] ==== */
-const APP_VERSION = 'v1';
-const SCHEMA_VERSION = 1;
+const APP_VERSION = 'v2';
+const SCHEMA_VERSION = 2;
 const STORAGE_KEY = 'finTracker.state';
 const THEME_KEY = 'finTracker.theme';
 const LEGACY_V0_KEY = 'tracker_v2_data';
 const LOAN_TYPES = ['信貸', '房貸', '質押', '融資', '其他'];
 const MARGIN_TYPES = ['質押', '融資'];
 const DAY_MS = 86400000;
+const REF_0050_IRR = 11.8;
+const REF_0050_YIELD = 3.5;
+const REF_0050_54C = 60;
+const REF_US_IRR = 10;
+const REF_US_YIELD = 1.3;
+const FUBON_TW_BASE_RATE = 0.001425;
+const NHI_SUPP_RATE = 0.0211;
+const NHI_THRESHOLD = 20000;
+const NHI_CAP = 10000000;
+const TAX_54C_CREDIT_RATE = 0.085;
+const TAX_54C_CREDIT_CAP = 80000;
 
 /* ==== [MODULE: UTIL] ==== */
 function num(x) {
@@ -391,6 +423,17 @@ function fmtCompact(v) {
 
 /* ==== [MODULE: STATE] ==== */
 function holdingTemplate() { return { symbol: '', name: '', shares: 0, avg: 0, price: 0, lev: 1, pledged: false, irr: 0 }; }
+function dcaTemplate(market) {
+  const us = market === 'US';
+  return {
+    market: us ? 'US' : 'TW',
+    symbol: us ? 'VOO' : '0050',
+    monthlyAmount: 0,
+    officialIrr: 0,
+    dividendYield: us ? REF_US_YIELD : REF_0050_YIELD,
+    domesticDividendRatio: us ? 0 : REF_0050_54C
+  };
+}
 function loanTemplate() { return { name: '', type: '信貸', principal: 0, rate: 0, term: 0, paid: 0, startDate: '' }; }
 function flowTemplate() { return { date: '', type: 'in', amount: 0 }; }
 function snapshotTemplate() { return { date: '', tw: 0, us: 0, cash: 0, debt: 0, netWorth: 0, totalAssets: 0 }; }
@@ -408,7 +451,12 @@ function emptyState() {
       reserveMonths: 6, reserveAmount: 0,
       inflation: 2
     },
-    projection: { monthly: 0, cashRate: 1, real: false, years: 30 }
+    projection: {
+      monthly: 0, cashRate: 1, real: false, years: 30,
+      fubonTwDiscount: 1, fubonTwMinFee: 1, fubonUsFeeRate: 0.1,
+      twPayoutFreq: 2, applyNhi: true, apply54cCredit: true,
+      dcaPlans: []
+    }
   };
 }
 function defaultState() {
@@ -441,6 +489,10 @@ function defaultState() {
   ];
   s.targets.leverage = 1.6;
   s.projection.monthly = 20000;
+  s.projection.dcaPlans = [
+    { market: 'TW', symbol: '0050', monthlyAmount: 14000, officialIrr: 0, dividendYield: REF_0050_YIELD, domesticDividendRatio: REF_0050_54C },
+    { market: 'US', symbol: 'VOO', monthlyAmount: 300, officialIrr: REF_US_IRR, dividendYield: REF_US_YIELD, domesticDividendRatio: 0 }
+  ];
   return s;
 }
 function hasOwn(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
@@ -472,6 +524,19 @@ function normalizeState(raw) {
   s.loans = rows(raw.loans, loanTemplate, d.loans);
   s.cashflows = rows(raw.cashflows, flowTemplate, d.cashflows);
   s.snapshots = rows(raw.snapshots, snapshotTemplate, d.snapshots);
+  const rawProj = isObj(raw.projection) ? raw.projection : {};
+  if (Array.isArray(rawProj.dcaPlans)) {
+    s.projection.dcaPlans = rawProj.dcaPlans.filter(isObj).map(function (r) {
+      const mkt = r.market === 'US' ? 'US' : 'TW';
+      return deepMerge(dcaTemplate(mkt), r);
+    });
+  } else if (rawProj.monthly !== undefined && num(rawProj.monthly) >= 0 && raw.schemaVersion === 1) {
+    s.projection.dcaPlans = [{
+      market: 'TW', symbol: '0050', monthlyAmount: num(rawProj.monthly),
+      officialIrr: 0, dividendYield: REF_0050_YIELD, domesticDividendRatio: REF_0050_54C
+    }];
+  }
+  s.projection.dcaPlans.forEach(function (p) { if (p.market !== 'US') p.market = 'TW'; });
   s.loans.forEach(function (l) { if (LOAN_TYPES.indexOf(l.type) < 0) l.type = '其他'; });
   s.cashflows.forEach(function (c) { if (c.type !== 'out') c.type = 'in'; });
   s.snapshots = s.snapshots
@@ -821,27 +886,210 @@ function weightedIrr(s, m) {
   return tot > 0 ? w / tot : 0;
 }
 function realRate(nominal, inflation) { return (1 + num(nominal)) / (1 + num(inflation)) - 1; }
-/* opts: {assets, loans, today, rate (decimal), inflation (decimal), real, monthly, years} */
+function dcaEffectiveIrr(plan) {
+  const raw = num(plan && plan.officialIrr);
+  if (raw > 0) return raw;
+  return (plan && plan.market === 'US') ? REF_US_IRR : REF_0050_IRR;
+}
+function calcFubonDcaFee(plan, fx, projCfg) {
+  const amt = Math.max(0, num(plan && plan.monthlyAmount));
+  if (!(amt > 0)) return { grossTwd: 0, feeTwd: 0, netTwd: 0, feeLocal: 0 };
+  const cfg = isObj(projCfg) ? projCfg : {};
+  if (plan && plan.market === 'US') {
+    const rate = Math.max(0, num(cfg.fubonUsFeeRate !== undefined ? cfg.fubonUsFeeRate : 0.1)) / 100;
+    const feeUsd = amt * rate;
+    const grossTwd = amt * num(fx);
+    const feeTwd = feeUsd * num(fx);
+    return { grossTwd: grossTwd, feeTwd: feeTwd, netTwd: Math.max(0, grossTwd - feeTwd), feeLocal: feeUsd };
+  }
+  const disc = Math.max(0, num(cfg.fubonTwDiscount !== undefined ? cfg.fubonTwDiscount : 1));
+  const minFee = Math.max(0, num(cfg.fubonTwMinFee !== undefined ? cfg.fubonTwMinFee : 1));
+  const rawFee = Math.floor(amt * FUBON_TW_BASE_RATE * (disc / 10));
+  const feeTwd = Math.min(amt, Math.max(minFee, rawFee));
+  return { grossTwd: amt, feeTwd: feeTwd, netTwd: Math.max(0, amt - feeTwd), feeLocal: feeTwd };
+}
+/* Compute annual TW dividend, 54C domestic dividend, 2nd-gen NHI supplementary premium (2.11% if single payout >= 20,000), and 54C 8.5% tax credit (cap 80,000) */
+function calcTwDividendTaxAndNhi(twBuckets, projCfg, realScale) {
+  const cfg = isObj(projCfg) ? projCfg : {};
+  const freq = Math.max(1, Math.round(num(cfg.twPayoutFreq) || 2));
+  const scale = (realScale != null && realScale > 0) ? realScale : 1;
+  let annualDiv = 0, annual54c = 0;
+  (twBuckets || []).forEach(function (b) {
+    const bal = Math.max(0, num(b.balance));
+    const yld = Math.max(0, num(b.dividendYield)) / 100;
+    const r54c = clamp(num(b.domesticDividendRatio), 0, 100) / 100;
+    const div = bal * yld;
+    annualDiv += div;
+    annual54c += div * r54c;
+  });
+  const single54cNom = (annual54c * scale) / freq;
+  let nhiNom = 0;
+  if (cfg.applyNhi !== false && single54cNom >= NHI_THRESHOLD) {
+    nhiNom = Math.min(single54cNom, NHI_CAP) * NHI_SUPP_RATE * freq;
+  }
+  let creditNom = 0;
+  if (cfg.apply54cCredit !== false && annual54c > 0) {
+    creditNom = Math.min(TAX_54C_CREDIT_CAP, (annual54c * scale) * TAX_54C_CREDIT_RATE);
+  }
+  const nhi = nhiNom / scale;
+  const credit54c = creditNom / scale;
+  return {
+    annualDiv: annualDiv,
+    annual54c: annual54c,
+    nhi: nhi,
+    credit54c: credit54c,
+    netTaxImpact: credit54c - nhi
+  };
+}
+/* opts: {assets, loans, today, rate (decimal), inflation (decimal), real, monthly, years, fx, twMV, usMV, cash, twHoldings, usHoldings, projection} */
 function project(opts) {
   const years = Math.max(1, Math.round(num(opts.years) || 30));
   const infl = num(opts.inflation);
   const real = !!opts.real;
-  let r = real ? realRate(opts.rate, infl) : num(opts.rate);
-  r = Math.max(r, -0.99);
-  const g = Math.pow(1 + r, 1 / 12) - 1;
-  const c = num(opts.monthly);
+  const effRate = function (nom) {
+    const r = real ? realRate(nom, infl) : num(nom);
+    return Math.max(r, -0.99);
+  };
+  const mRate = function (nom) { return Math.pow(1 + effRate(nom), 1 / 12) - 1; };
   const loans = (opts.loans || []).map(function (l) {
     return { P: num(l.principal), rate: num(l.rate), n: Math.round(num(l.term)), k0: loanPaidCount(l, opts.today || todayStr()) };
   });
-  let A = num(opts.assets);
-  const rows = [];
-  for (let y = 0; y <= years; y++) {
-    if (y > 0) for (let i = 0; i < 12; i++) A = A * (1 + g) + c;
-    let debt = loans.reduce(function (a, l) { return a + loanBalance(l.P, l.rate, l.n, l.k0 + 12 * y); }, 0);
-    if (real) debt /= Math.pow(1 + infl, y);
-    rows.push({ year: y, assets: A, debt: debt, netWorth: A - debt });
+
+  const projCfg = isObj(opts.projection) ? opts.projection : {};
+  const hasDcaPlans = Array.isArray(projCfg.dcaPlans);
+
+  if (!hasDcaPlans) {
+    const r = effRate(opts.rate);
+    const g = Math.pow(1 + r, 1 / 12) - 1;
+    const c = num(opts.monthly);
+    let A = num(opts.assets);
+    const rows = [];
+    for (let y = 0; y <= years; y++) {
+      if (y > 0) for (let i = 0; i < 12; i++) A = A * (1 + g) + c;
+      let debt = loans.reduce(function (a, l) { return a + loanBalance(l.P, l.rate, l.n, l.k0 + 12 * y); }, 0);
+      if (real) debt /= Math.pow(1 + infl, y);
+      rows.push({
+        year: y, assets: A, debt: debt, netWorth: A - debt,
+        annualFee: 0, annualDiv: 0, annual54c: 0, annualNhi: 0, annual54cCredit: 0,
+        cumInvested: c * 12 * y, cumFee: 0, cumNhi: 0, cum54cCredit: 0
+      });
+    }
+    return { rate: r, dcaMonthlyGrossTwd: c, dcaMonthlyFeeTwd: 0, dcaMonthlyNetTwd: c, rows: rows };
   }
-  return { rate: r, rows: rows };
+
+  const fx = num(opts.fx) || 32;
+  let twBase = num(opts.twMV);
+  let usBase = num(opts.usMV);
+  let cashBase = num(opts.cash);
+  if (twBase === 0 && usBase === 0 && cashBase === 0 && num(opts.assets) > 0) {
+    twBase = num(opts.assets);
+  }
+  const twHoldIrr = (opts.twHoldings && opts.twHoldings.length && twBase > 0)
+    ? opts.twHoldings.reduce(function (a, h) { return a + h.mv * h.irr; }, 0) / twBase
+    : num(opts.rate);
+  const usHoldIrr = (opts.usHoldings && opts.usHoldings.length && usBase > 0)
+    ? opts.usHoldings.reduce(function (a, h) { return a + h.mv * h.irr; }, 0) / usBase
+    : num(opts.rate);
+  const cashNomIrr = num(projCfg.cashRate !== undefined ? projCfg.cashRate : 1) / 100;
+
+  const gTwBase = mRate(twHoldIrr);
+  const gUsBase = mRate(usHoldIrr);
+  const gCashBase = mRate(cashNomIrr);
+
+  const plans = projCfg.dcaPlans.map(function (p) {
+    const feeInfo = calcFubonDcaFee(p, fx, projCfg);
+    const nomIrr = dcaEffectiveIrr(p) / 100;
+    return {
+      market: p.market === 'US' ? 'US' : 'TW',
+      symbol: p.symbol || (p.market === 'US' ? 'VOO' : '0050'),
+      grossTwd: feeInfo.grossTwd,
+      feeTwd: feeInfo.feeTwd,
+      netTwd: feeInfo.netTwd,
+      g: mRate(nomIrr),
+      nomIrr: nomIrr,
+      dividendYield: p.market === 'US' ? num(p.dividendYield) : (num(p.dividendYield) > 0 ? num(p.dividendYield) : REF_0050_YIELD),
+      domesticDividendRatio: p.market === 'US' ? 0 : (p.domesticDividendRatio !== undefined && p.domesticDividendRatio !== '' ? num(p.domesticDividendRatio) : REF_0050_54C),
+      balance: 0
+    };
+  });
+
+  const dcaMonthlyGrossTwd = plans.reduce(function (a, p) { return a + p.grossTwd; }, 0);
+  const dcaMonthlyFeeTwd = plans.reduce(function (a, p) { return a + p.feeTwd; }, 0);
+  const dcaMonthlyNetTwd = plans.reduce(function (a, p) { return a + p.netTwd; }, 0);
+
+  let cumInvested = 0, cumFee = 0, cumNhi = 0, cum54cCredit = 0;
+  const rows = [];
+
+  for (let y = 0; y <= years; y++) {
+    let annualFee = 0, annualDiv = 0, annual54c = 0, annualNhi = 0, annual54cCredit = 0;
+    const realScale = real ? Math.pow(1 + infl, y) : 1;
+
+    if (y > 0) {
+      for (let m = 0; m < 12; m++) {
+        twBase = twBase * (1 + gTwBase);
+        usBase = usBase * (1 + gUsBase);
+        cashBase = cashBase * (1 + gCashBase);
+        plans.forEach(function (p) {
+          p.balance = p.balance * (1 + p.g) + p.netTwd;
+          cumInvested += p.grossTwd;
+          annualFee += p.feeTwd;
+        });
+      }
+      cumFee += annualFee;
+
+      const twBuckets = [{ balance: twBase, dividendYield: REF_0050_YIELD, domesticDividendRatio: REF_0050_54C }];
+      plans.forEach(function (p) {
+        if (p.market === 'TW') {
+          twBuckets.push({ balance: p.balance, dividendYield: p.dividendYield, domesticDividendRatio: p.domesticDividendRatio });
+        }
+      });
+      const taxRes = calcTwDividendTaxAndNhi(twBuckets, projCfg, realScale);
+      annualDiv = taxRes.annualDiv;
+      annual54c = taxRes.annual54c;
+      annualNhi = taxRes.nhi;
+      annual54cCredit = taxRes.credit54c;
+      cumNhi += annualNhi;
+      cum54cCredit += annual54cCredit;
+
+      const totalTw = twBase + plans.reduce(function (a, p) { return a + (p.market === 'TW' ? p.balance : 0); }, 0);
+      if (totalTw > 0) {
+        const adj = taxRes.netTaxImpact;
+        twBase = Math.max(0, twBase + adj * (twBase / totalTw));
+        plans.forEach(function (p) {
+          if (p.market === 'TW') p.balance = Math.max(0, p.balance + adj * (p.balance / totalTw));
+        });
+      }
+    } else {
+      const initBuckets = [{ balance: twBase, dividendYield: REF_0050_YIELD, domesticDividendRatio: REF_0050_54C }];
+      const initTax = calcTwDividendTaxAndNhi(initBuckets, projCfg, 1);
+      annualDiv = initTax.annualDiv;
+      annual54c = initTax.annual54c;
+      annualNhi = initTax.nhi;
+      annual54cCredit = initTax.credit54c;
+    }
+
+    const dcaTwTotal = plans.reduce(function (a, p) { return a + (p.market === 'TW' ? p.balance : 0); }, 0);
+    const dcaUsTotal = plans.reduce(function (a, p) { return a + (p.market === 'US' ? p.balance : 0); }, 0);
+    const A = twBase + usBase + cashBase + dcaTwTotal + dcaUsTotal;
+    let debt = loans.reduce(function (a, l) { return a + loanBalance(l.P, l.rate, l.n, l.k0 + 12 * y); }, 0);
+    if (real) debt /= realScale;
+
+    rows.push({
+      year: y, assets: A, debt: debt, netWorth: A - debt,
+      twAssets: twBase + dcaTwTotal, usAssets: usBase + dcaUsTotal, cashAssets: cashBase,
+      annualFee: annualFee, annualDiv: annualDiv, annual54c: annual54c,
+      annualNhi: annualNhi, annual54cCredit: annual54cCredit,
+      cumInvested: cumInvested, cumFee: cumFee, cumNhi: cumNhi, cum54cCredit: cum54cCredit
+    });
+  }
+
+  return {
+    rate: effRate(opts.rate),
+    dcaMonthlyGrossTwd: dcaMonthlyGrossTwd,
+    dcaMonthlyFeeTwd: dcaMonthlyFeeTwd,
+    dcaMonthlyNetTwd: dcaMonthlyNetTwd,
+    rows: rows
+  };
 }
 
 /* ==== [MODULE: ADVICE] ==== */
@@ -947,12 +1195,19 @@ function buildAdvice(m, t) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     APP_VERSION: APP_VERSION, SCHEMA_VERSION: SCHEMA_VERSION, STORAGE_KEY: STORAGE_KEY,
+    REF_0050_IRR: REF_0050_IRR, REF_0050_YIELD: REF_0050_YIELD, REF_0050_54C: REF_0050_54C,
+    REF_US_IRR: REF_US_IRR, REF_US_YIELD: REF_US_YIELD,
+    FUBON_TW_BASE_RATE: FUBON_TW_BASE_RATE, NHI_SUPP_RATE: NHI_SUPP_RATE, NHI_THRESHOLD: NHI_THRESHOLD,
+    TAX_54C_CREDIT_RATE: TAX_54C_CREDIT_RATE, TAX_54C_CREDIT_CAP: TAX_54C_CREDIT_CAP,
     num: num, parseDate: parseDate, toDateStr: toDateStr, fmtNum: fmtNum, fmtPct: fmtPct, fmtCompact: fmtCompact,
-    defaultState: defaultState, emptyState: emptyState, deepMerge: deepMerge, normalizeState: normalizeState, migrateV0: migrateV0,
+    defaultState: defaultState, emptyState: emptyState, dcaTemplate: dcaTemplate,
+    deepMerge: deepMerge, normalizeState: normalizeState, migrateV0: migrateV0,
     loanPayment: loanPayment, loanBalance: loanBalance, loanSummary: loanSummary, loanPaidCount: loanPaidCount,
     amortSchedule: amortSchedule, monthsElapsed: monthsElapsed,
     xirr: xirr, modifiedDietz: modifiedDietz, cagrFromCashflows: cagrFromCashflows, avgAnnualFromSnapshots: avgAnnualFromSnapshots,
-    computeAll: computeAll, weightedIrr: weightedIrr, realRate: realRate, project: project,
+    computeAll: computeAll, weightedIrr: weightedIrr, realRate: realRate,
+    dcaEffectiveIrr: dcaEffectiveIrr, calcFubonDcaFee: calcFubonDcaFee, calcTwDividendTaxAndNhi: calcTwDividendTaxAndNhi,
+    project: project,
     buildAdvice: buildAdvice, makeSnapshot: makeSnapshot, upsertSnapshot: upsertSnapshot
   };
 }
@@ -1044,8 +1299,8 @@ let P = null;
 const chartHidden = { proj: {}, hist: {} };
 
 /* ==== [MODULE: RENDER-INPUTS] ==== */
-function inNum(path, val, cls, label) {
-  return '<input class="in num ' + (cls || '') + '" type="text" inputmode="decimal" autocomplete="off" placeholder="0" data-path="' + path +
+function inNum(path, val, cls, label, ph) {
+  return '<input class="in num ' + (cls || '') + '" type="text" inputmode="decimal" autocomplete="off" placeholder="' + esc(ph == null ? '0' : ph) + '" data-path="' + path +
     '" data-kind="num" value="' + esc(fmtInput(val)) + '"' + (label ? ' aria-label="' + esc(label) + '"' : '') + '>';
 }
 function inText(path, val, cls, ph) {
@@ -1160,10 +1415,52 @@ function renderTargets() {
     field('通膨率 (%)', inNum(t + 'inflation', S.targets.inflation))
   ].join('');
 }
+function renderDcaPlans() {
+  const rows = S.projection.dcaPlans || [];
+  let h = '<thead><tr><th>市場 / 幣別</th><th>標的代號</th><th class="r">每月扣款金額</th><th class="r">公告複合年化 (%)</th>' +
+    '<th class="r">平均現金殖利率 (%)</th><th class="r">54C 境內股利佔比 (%)</th><th class="r">單月手續費 (TWD)</th><th class="r">單月淨投入 (TWD)</th><th></th></tr></thead><tbody>';
+  rows.forEach(function (r, i) {
+    const p = 'projection.dcaPlans.' + i + '.';
+    const us = r.market === 'US';
+    const irrPh = us ? (REF_US_IRR + ' (美股參考值)') : (REF_0050_IRR + ' (0050參考值)');
+    const yldPh = us ? String(REF_US_YIELD) : (REF_0050_YIELD + ' (0050參考值)');
+    const r54cPh = us ? '0 (海外免計54C)' : (REF_0050_54C + ' (0050參考值)');
+    const irrTag = (!us && !(num(r.officialIrr) > 0))
+      ? '<span class="ref-tag" id="dca-' + i + '-irrTag">預設代入 0050 參考值 ' + REF_0050_IRR + '%</span>'
+      : '<span class="ref-tag" id="dca-' + i + '-irrTag">' + (us ? '美股年化報酬' : '自訂年化報酬') + '</span>';
+    h += '<tr>' +
+      '<td>' + inSelect(p + 'market', r.market, [['TW', '台股 (TWD)'], ['US', '美股複委託 (USD)']]) + '</td>' +
+      '<td>' + inText(p + 'symbol', r.symbol, 'w-sym', us ? 'VOO' : '0050') + '</td>' +
+      '<td>' + inNum(p + 'monthlyAmount', r.monthlyAmount, 'w-num', '每月扣款金額', us ? 'USD' : 'TWD') +
+        '<span class="ref-tag">' + (us ? '原幣 USD 扣款' : '台幣 TWD 扣款') + '</span></td>' +
+      '<td>' + inNum(p + 'officialIrr', r.officialIrr, 'w-num' + (num(r.officialIrr) > 0 ? '' : ' is-ref'), '公告複合年化', irrPh) + irrTag + '</td>' +
+      '<td>' + inNum(p + 'dividendYield', r.dividendYield, 'w-sm', '平均現金殖利率', yldPh) +
+        '<span class="ref-tag">' + (us ? '美股殖利率' : '0050 參考約 ' + REF_0050_YIELD + '%') + '</span></td>' +
+      '<td>' + (us ? '<span class="muted small-text">海外所得免計 54C</span>' :
+        (inNum(p + 'domesticDividendRatio', r.domesticDividendRatio, 'w-sm', '54C 境內股利佔比', r54cPh) +
+        '<span class="ref-tag">0050 參考約 ' + REF_0050_54C + '%</span>')) + '</td>' +
+      '<td class="r" id="dca-' + i + '-fee"></td>' +
+      '<td class="r" id="dca-' + i + '-net"></td>' +
+      '<td><button class="btn small danger" data-act="del-row" data-list="dcaPlans" data-i="' + i + '">刪除</button></td></tr>';
+  });
+  if (!rows.length) h += '<tr><td colspan="9" class="empty">尚無定期定額計畫，可點選上方按鈕新增台股或美股複委託定期定額</td></tr>';
+  h += '</tbody><tfoot><tr><td colspan="2">每月定期定額合計 (TWD)</td><td class="r" id="dca-t-gross"></td><td colspan="3"></td>' +
+    '<td class="r" id="dca-t-fee"></td><td class="r" id="dca-t-net"></td><td></td></tr></tfoot>';
+  const el = $('#dcaTable');
+  if (el) el.innerHTML = h;
+}
 function renderProjControls() {
+  renderDcaPlans();
   $('#projControls').innerHTML =
-    field('每月投入', inNum('projection.monthly', S.projection.monthly)) +
+    field('富邦台股定期定額折數 (折)', inNum('projection.fubonTwDiscount', S.projection.fubonTwDiscount, '', '富邦台股手續費折數', '1')) +
+    field('台股定期定額最低手續費 (元)', inNum('projection.fubonTwMinFee', S.projection.fubonTwMinFee, '', '台股最低手續費', '1')) +
+    field('富邦美股複委託費率 (%)', inNum('projection.fubonUsFeeRate', S.projection.fubonUsFeeRate, '', '富邦美股定期定額費率', '0.1')) +
+    field('台股年配息次數 (0050為2)', inNum('projection.twPayoutFreq', S.projection.twPayoutFreq, '', '台股年配息次數', '2')) +
     field('現金年化報酬率 (%)', inNum('projection.cashRate', S.projection.cashRate)) +
+    '<label class="field" style="width:auto;flex-direction:row;align-items:center;gap:6px;padding-bottom:6px">' +
+      inCheck('projection.applyNhi', S.projection.applyNhi, '計入二代健保補充保費') + '<span>二代健保補充保費 (2.11%)</span></label>' +
+    '<label class="field" style="width:auto;flex-direction:row;align-items:center;gap:6px;padding-bottom:6px">' +
+      inCheck('projection.apply54cCredit', S.projection.apply54cCredit, '計入54C股利抵減稅額') + '<span>扣除 54C 抵減稅額 (8.5%)</span></label>' +
     '<div class="seg" role="group" aria-label="名目或實質">' +
     '<button data-act="proj-mode" data-real="0" class="' + (S.projection.real ? '' : 'on') + '">名目</button>' +
     '<button data-act="proj-mode" data-real="1" class="' + (S.projection.real ? 'on' : '') + '">實質</button></div>';
@@ -1260,6 +1557,26 @@ function renderRowOutputs() {
     setText('loan-' + i + '-rem', l.interestOnly ? '只付息' : l.paid + ' / ' + l.remainingTerms);
     setText('loan-' + i + '-int', l.interestOnly ? '不適用' : fmtNum(l.totalInterest));
   });
+  const fx = num(S.fx.usdTwd);
+  (S.projection.dcaPlans || []).forEach(function (r, i) {
+    const f = calcFubonDcaFee(r, fx, S.projection);
+    const us = r.market === 'US';
+    setText('dca-' + i + '-fee', fmtNum(f.feeTwd, us ? 1 : 0));
+    setText('dca-' + i + '-net', fmtNum(f.netTwd, 0));
+    const tagEl = document.getElementById('dca-' + i + '-irrTag');
+    if (tagEl) {
+      tagEl.textContent = (!us && !(num(r.officialIrr) > 0))
+        ? ('預設代入 0050 參考值 ' + REF_0050_IRR + '%')
+        : (us ? '美股年化報酬' : '自訂年化報酬');
+    }
+    const irrIn = document.querySelector('[data-path="projection.dcaPlans.' + i + '.officialIrr"]');
+    if (irrIn && irrIn.classList && irrIn.classList.toggle) {
+      irrIn.classList.toggle('is-ref', !(num(r.officialIrr) > 0));
+    }
+  });
+  setText('dca-t-gross', fmtNum(P ? P.dcaMonthlyGrossTwd : 0));
+  setText('dca-t-fee', fmtNum(P ? P.dcaMonthlyFeeTwd : 0, 1));
+  setText('dca-t-net', fmtNum(P ? P.dcaMonthlyNetTwd : 0));
   $all('details.amort[open]').forEach(renderAmort);
   const sum = M.allocTargetSum, okSum = Math.abs(sum - 100) <= 0.01;
   const el = $('#allocSum');
@@ -1316,21 +1633,27 @@ function renderAlloc() {
 function computeProjection() {
   return project({
     assets: M.totalAssets, loans: S.loans, today: M.today, rate: M.weightedIrr,
-    inflation: num(S.targets.inflation) / 100, real: S.projection.real, monthly: S.projection.monthly, years: 30
+    inflation: num(S.targets.inflation) / 100, real: S.projection.real, monthly: S.projection.monthly, years: 30,
+    fx: S.fx.usdTwd, twMV: M.twMV, usMV: M.usMV, cash: M.cash,
+    twHoldings: M.tw, usHoldings: M.us, projection: S.projection
   });
 }
 function renderProjection() {
   const infl = num(S.targets.inflation) / 100;
-  $('#projRate').innerHTML = '加權名目年化報酬率 <b>' + fmtPct(M.weightedIrr) + '</b>，實質 <b>' + fmtPct(realRate(M.weightedIrr, infl)) +
-    '</b>（通膨 ' + fmtPct(infl, 1) + '）';
+  $('#projRate').innerHTML = '現有部位加權名目年化 <b>' + fmtPct(M.weightedIrr) + '</b>，實質 <b>' + fmtPct(realRate(M.weightedIrr, infl)) +
+    '</b>（通膨 ' + fmtPct(infl, 1) + '）｜每月定期定額總扣款 <b>' + fmtNum(P.dcaMonthlyGrossTwd) + '</b> 元（富邦手續費 <b>' +
+    fmtNum(P.dcaMonthlyFeeTwd, 1) + '</b> 元，淨投入 <b>' + fmtNum(P.dcaMonthlyNetTwd) + '</b> 元）';
   const yr0 = +M.today.slice(0, 4);
   const marks = [5, 10, 15, 20, 25, 30];
-  let h = '<thead><tr><th>年</th><th>西元</th><th class="r">資產</th><th class="r">負債</th><th class="r">淨值</th></tr></thead><tbody>';
+  let h = '<thead><tr><th>年</th><th>西元</th><th class="r">資產</th><th class="r">負債</th><th class="r">淨值</th>' +
+    '<th class="r">當年度 54C 股利</th><th class="r">當年度二代健保 (2.11%)</th><th class="r">當年度 54C 抵減 (8.5%)</th><th class="r">累計手續費</th></tr></thead><tbody>';
   [0].concat(marks).forEach(function (y) {
     const r = P.rows[y];
     if (!r) return;
     h += '<tr' + (y % 10 === 0 && y > 0 ? ' class="hl"' : '') + '><td>' + (y === 0 ? '現在' : '第 ' + y + ' 年') + '</td><td>' + (yr0 + y) + '</td><td class="r">' +
-      fmtNum(r.assets) + '</td><td class="r">' + fmtNum(r.debt) + '</td><td class="r">' + fmtNum(r.netWorth) + '</td></tr>';
+      fmtNum(r.assets) + '</td><td class="r">' + fmtNum(r.debt) + '</td><td class="r">' + fmtNum(r.netWorth) + '</td><td class="r">' +
+      fmtNum(r.annual54c) + '</td><td class="r">' + (r.annualNhi > 0 ? '-' + fmtNum(r.annualNhi) : '0') + '</td><td class="r">' +
+      (r.annual54cCredit > 0 ? '+' + fmtNum(r.annual54cCredit) : '0') + '</td><td class="r">' + fmtNum(r.cumFee) + '</td></tr>';
   });
   $('#projTable').innerHTML = h + '</tbody>';
 }
@@ -1548,6 +1871,23 @@ function onFieldInput(el) {
   else if (kind === 'bool') v = !!el.checked;
   else v = el.value;
   setPath(S, path, v);
+  const mktMatch = /^projection\.dcaPlans\.(\d+)\.market$/.exec(path);
+  if (mktMatch) {
+    const idx = +mktMatch[1];
+    const row = S.projection.dcaPlans[idx];
+    if (row) {
+      if (v === 'US') {
+        if (!row.symbol || row.symbol === '0050') row.symbol = 'VOO';
+        row.domesticDividendRatio = 0;
+        if (row.dividendYield === REF_0050_YIELD) row.dividendYield = REF_US_YIELD;
+      } else {
+        if (!row.symbol || row.symbol === 'VOO') row.symbol = '0050';
+        if (row.domesticDividendRatio === 0) row.domesticDividendRatio = REF_0050_54C;
+        if (row.dividendYield === REF_US_YIELD) row.dividendYield = REF_0050_YIELD;
+      }
+      renderDcaPlans();
+    }
+  }
   $all('[data-path="' + path + '"]').forEach(function (o) {
     if (o !== el && kind === 'num') o.value = fmtInput(v);
   });
@@ -1575,7 +1915,18 @@ function bindEvents() {
     if (!btn) return;
     const act = btn.getAttribute('data-act');
     const list = btn.getAttribute('data-list');
-    if (act === 'add-row' && ROW_TEMPLATES[list]) {
+    if (act === 'add-row' && (list === 'dcaTw' || list === 'dcaUs')) {
+      const row = dcaTemplate(list === 'dcaUs' ? 'US' : 'TW');
+      row.monthlyAmount = list === 'dcaUs' ? 300 : 10000;
+      S.projection.dcaPlans.push(row);
+      renderDcaPlans();
+      update();
+    } else if (act === 'del-row' && list === 'dcaPlans') {
+      const i = +btn.getAttribute('data-i');
+      S.projection.dcaPlans.splice(i, 1);
+      renderDcaPlans();
+      update();
+    } else if (act === 'add-row' && ROW_TEMPLATES[list]) {
       const row = ROW_TEMPLATES[list]();
       if (list === 'cashflows') row.date = todayStr();
       if (list === 'loans') row.name = '負債 ' + (S.loans.length + 1);

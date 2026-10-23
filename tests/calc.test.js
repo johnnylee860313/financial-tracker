@@ -340,10 +340,94 @@ test('UI script initializes and renders all 15 metric cards, tables, and SVG cha
   // Verify 15 metric cards rendered and populated
   assert(elements.metrics.innerHTML.includes('id="m-lev"'), 'Leverage card rendered');
   assert(elements.metrics.innerHTML.includes('id="m-xirr"'), 'XIRR card rendered');
+  assert(elements.dcaTable.innerHTML.includes('0050參考值'), 'DCA table rendered with 0050 reference placeholder');
   assert(elements.projChart.innerHTML.includes('<svg'), 'Projection SVG chart rendered');
   assert(elements.histChart.innerHTML.includes('<svg'), 'History SVG chart rendered');
   assert(elements.projTable.innerHTML.includes('第 10 年') && elements.projTable.innerHTML.includes('第 20 年') && elements.projTable.innerHTML.includes('第 30 年'), 'Projection 10/20/30yr rows rendered');
   assert(storage['finTracker.state'], 'State saved to localStorage');
+});
+
+// 8. v2 DCA Plans (TW & US Sub-brokerage), Fubon Fee Model, 54C 8.5% Tax Credit, and 2nd-Gen NHI (2.11%)
+test('v2 DCA plans, 0050 reference IRR default, Fubon TW/US DCA fees, 54C 8.5% credit, and 2.11% NHI supplementary tax', () => {
+  assert.strictEqual(core.APP_VERSION, 'v2', 'APP_VERSION must be v2');
+  assert.strictEqual(core.REF_0050_IRR, 11.8, '0050 reference official CAGR is 11.8%');
+  assert.strictEqual(core.REF_0050_YIELD, 3.5, '0050 reference dividend yield is 3.5%');
+  assert.strictEqual(core.REF_0050_54C, 60, '0050 reference 54C ratio is 60%');
+
+  // 8.1 Effective IRR uses 0050 reference (11.8%) when TW plan officialIrr is 0 / empty
+  const twPlanDefault = { market: 'TW', symbol: '0050', monthlyAmount: 14000, officialIrr: 0, dividendYield: 3.5, domesticDividendRatio: 60 };
+  near(core.dcaEffectiveIrr(twPlanDefault), 11.8, 1e-9, 'TW DCA with 0 officialIrr defaults to 0050 reference 11.8%');
+  const twPlanCustom = { market: 'TW', symbol: '00631L', monthlyAmount: 10000, officialIrr: 18, dividendYield: 0, domesticDividendRatio: 0 };
+  near(core.dcaEffectiveIrr(twPlanCustom), 18, 1e-9, 'TW DCA with custom officialIrr uses custom value');
+
+  // 8.2 Fubon Securities fee calculation
+  // TW DCA: <= 14,035 TWD at 1折 (0.01425%) -> min fee 1 TWD
+  const feeTw14k = core.calcFubonDcaFee({ market: 'TW', monthlyAmount: 14000 }, 32, { fubonTwDiscount: 1, fubonTwMinFee: 1 });
+  near(feeTw14k.feeTwd, 1, 1e-9, 'Fubon TW DCA 14,000 TWD fee is 1 TWD');
+  near(feeTw14k.netTwd, 13999, 1e-9, 'Fubon TW DCA 14,000 TWD net is 13,999 TWD');
+
+  // TW DCA: 50,000 TWD at 1折 -> round(50000 * 0.001425 * 0.1) = round(7.125) = 7 TWD
+  const feeTw50k = core.calcFubonDcaFee({ market: 'TW', monthlyAmount: 50000 }, 32, { fubonTwDiscount: 1, fubonTwMinFee: 1 });
+  near(feeTw50k.feeTwd, 7, 1e-9, 'Fubon TW DCA 50,000 TWD fee is 7 TWD');
+  near(feeTw50k.netTwd, 49993, 1e-9, 'Fubon TW DCA 50,000 TWD net is 49,993 TWD');
+
+  // US Sub-brokerage DCA: 300 USD at 0.1% (no minimum fee), fx = 32 -> fee = 0.3 USD = 9.6 TWD, gross = 9,600 TWD, net = 9,590.4 TWD
+  const feeUs300 = core.calcFubonDcaFee({ market: 'US', monthlyAmount: 300 }, 32, { fubonUsFeeRate: 0.1 });
+  near(feeUs300.feeLocal, 0.3, 1e-9, 'Fubon US DCA 300 USD fee is 0.3 USD');
+  near(feeUs300.grossTwd, 9600, 1e-9, 'Fubon US DCA 300 USD gross TWD is 9,600');
+  near(feeUs300.feeTwd, 9.6, 1e-9, 'Fubon US DCA 300 USD fee TWD is 9.6');
+  near(feeUs300.netTwd, 9590.4, 1e-9, 'Fubon US DCA 300 USD net TWD is 9,590.4');
+
+  // 8.3 Taiwan Dividend 54C + 2nd-Gen NHI (2.11% when single 54C payout >= 20,000) + 54C 8.5% tax credit (cap 80,000)
+  // Case A: TW balance = 1,500,000 -> div = 52,500 -> 54C (60%) = 31,500 -> semi-annual (freq=2) single 54C = 15,750 (< 20,000) -> NHI = 0
+  // 54C credit = 31,500 * 8.5% = 2,677.5
+  const taxBelow = core.calcTwDividendTaxAndNhi(
+    [{ balance: 1500000, dividendYield: 3.5, domesticDividendRatio: 60 }],
+    { twPayoutFreq: 2, applyNhi: true, apply54cCredit: true },
+    1
+  );
+  near(taxBelow.annualDiv, 52500, 1e-6, 'Annual dividend on 1.5M');
+  near(taxBelow.annual54c, 31500, 1e-6, 'Annual 54C on 1.5M');
+  near(taxBelow.nhi, 0, 1e-6, 'Below 20,000 per payout -> 0 NHI');
+  near(taxBelow.credit54c, 31500 * 0.085, 1e-6, '54C 8.5% credit on 31,500');
+
+  // Case B: TW balance = 2,000,000 -> div = 70,000 -> 54C (60%) = 42,000 -> semi-annual single 54C = 21,000 (>= 20,000)
+  // NHI = 42,000 * 2.11% = 886.2; 54C credit = 42,000 * 8.5% = 3,570
+  const taxAbove = core.calcTwDividendTaxAndNhi(
+    [{ balance: 2000000, dividendYield: 3.5, domesticDividendRatio: 60 }],
+    { twPayoutFreq: 2, applyNhi: true, apply54cCredit: true },
+    1
+  );
+  near(taxAbove.annual54c, 42000, 1e-6, 'Annual 54C on 2M');
+  near(taxAbove.nhi, 42000 * 0.0211, 1e-6, 'Above 20,000 per payout -> 2.11% NHI');
+  near(taxAbove.credit54c, 42000 * 0.085, 1e-6, '54C 8.5% credit on 42,000');
+  near(taxAbove.netTaxImpact, 42000 * (0.085 - 0.0211), 1e-6, 'Net tax impact = +8.5% credit - 2.11% NHI');
+
+  // Case C: High TW balance = 60,000,000 -> div = 2,100,000 -> 54C (60%) = 1,260,000
+  // 54C credit = min(80,000, 1,260,000 * 8.5% = 107,100) = 80,000 (capped!)
+  const taxCap = core.calcTwDividendTaxAndNhi(
+    [{ balance: 60000000, dividendYield: 3.5, domesticDividendRatio: 60 }],
+    { twPayoutFreq: 2, applyNhi: true, apply54cCredit: true },
+    1
+  );
+  near(taxCap.credit54c, 80000, 1e-6, '54C 8.5% tax credit capped at 80,000 TWD');
+
+  // 8.4 Full 30-year v2 projection with TW + US DCA plans
+  const s = core.defaultState();
+  const m = core.computeAll(s, '2026-10-23');
+  const pV2 = core.project({
+    assets: m.totalAssets, loans: s.loans, today: '2026-10-23', rate: m.weightedIrr,
+    inflation: 0.02, real: false, years: 30,
+    fx: s.fx.usdTwd, twMV: m.twMV, usMV: m.usMV, cash: m.cash,
+    twHoldings: m.tw, usHoldings: m.us, projection: s.projection
+  });
+  near(pV2.dcaMonthlyGrossTwd, 14000 + 300 * 32, 1e-6, 'Monthly DCA gross = 23,600 TWD');
+  near(pV2.dcaMonthlyFeeTwd, 1 + 9.6, 1e-6, 'Monthly DCA fee = 10.6 TWD');
+  near(pV2.dcaMonthlyNetTwd, 23600 - 10.6, 1e-6, 'Monthly DCA net = 23,589.4 TWD');
+  near(pV2.rows[10].cumFee, 10.6 * 12 * 10, 1e-4, '10-year cumulative Fubon DCA fee');
+  assert(pV2.rows[10].annualNhi > 0, 'By Year 10, TW portfolio triggers 2.11% 2nd-gen NHI supplementary premium');
+  assert(pV2.rows[10].annual54cCredit > 0, 'By Year 10, TW portfolio receives 54C 8.5% tax credit');
+  near(pV2.rows[30].annual54cCredit, 80000, 1e-4, 'By Year 30, 54C tax credit reaches the 80,000 TWD legal cap');
 });
 
 console.log('\nAll ' + passed + ' test suites passed!');
