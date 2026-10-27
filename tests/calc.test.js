@@ -351,7 +351,7 @@ test('UI script initializes and renders all 15 metric cards, tables, and SVG cha
 
 // 8. DCA Plans (TW & US Sub-brokerage), Fubon Fee Model, 54C 8.5% Tax Credit, and 2nd-Gen NHI (2.11%)
 test('DCA plans, 0050/VOO/QQQ official IRR defaults, Fubon TW/US DCA fees, 54C 8.5% credit, and 2.11% NHI supplementary tax', () => {
-  assert.strictEqual(core.APP_VERSION, 'v5', 'APP_VERSION must be v5');
+  assert.strictEqual(core.APP_VERSION, 'v6', 'APP_VERSION must be v6');
   assert.strictEqual(core.REF_0050_IRR, 11.8, '0050 reference official CAGR is 11.8%');
   assert.strictEqual(core.REF_VOO_IRR, 14.6, 'VOO reference official CAGR is 14.6%');
   assert.strictEqual(core.REF_QQQ_IRR, 14.2, 'QQQ reference official CAGR is 14.2%');
@@ -622,6 +622,79 @@ test('v4 rolling horizon date subscripts (YYYY/MM) in table & SVG chart, auto-ad
   const savedAfterYrsEdit = JSON.parse(storage['finTracker.state']);
   near(savedAfterYrsEdit.cash.investYears, 4.5, 1e-6, 'Editing investYears updates cash.investYears to 4.5');
   assert.strictEqual(savedAfterYrsEdit.cash.investYearsAsOf, core.todayStr(), 'Editing investYears resets cash.investYearsAsOf to todayStr()');
+});
+
+// 11. v6 Requirements: Projection section placed below TW & US holdings, and reload persistence never overwrites user-entered data with defaults
+test('v6 projection section below TW/US holdings, and reload persistence preserves user inputs without overwriting with defaults', () => {
+  // 11.1 Section order: #sec-projection must come immediately after #sec-tw and #sec-us
+  const sectionIds = [...html.matchAll(/<section id="([^"]+)"/g)].map(m => m[1]);
+  const twIdx = sectionIds.indexOf('sec-tw');
+  const usIdx = sectionIds.indexOf('sec-us');
+  const projIdx = sectionIds.indexOf('sec-projection');
+  assert(twIdx >= 0 && usIdx === twIdx + 1 && projIdx === usIdx + 1, 'sec-projection must be placed directly below sec-tw and sec-us');
+
+  // 11.2 normalizeState on current schema must NOT overwrite user-edited 0/custom DCA officialIrr or monthlyAmount with defaults
+  const userSaved = core.defaultState();
+  userSaved.cash.twd = 427289;
+  userSaved.projection.dcaPlans[0].monthlyAmount = 0;
+  userSaved.projection.dcaPlans[0].officialIrr = 0; // user intentionally cleared IRR
+  userSaved.projection.dcaPlans[1].monthlyAmount = 500;
+  userSaved.projection.dcaPlans[1].officialIrr = 9.5;
+  const reloaded = core.normalizeState(JSON.parse(JSON.stringify(userSaved)));
+  assert.strictEqual(reloaded.cash.twd, 427289, 'Saved cash.twd preserved across reload');
+  assert.strictEqual(reloaded.projection.dcaPlans[0].monthlyAmount, 0, 'Saved 0 monthlyAmount preserved across reload');
+  assert.strictEqual(reloaded.projection.dcaPlans[0].officialIrr, 0, 'User-cleared officialIrr (0) is NOT overwritten by 11.8 on reload');
+  near(reloaded.projection.dcaPlans[1].officialIrr, 9.5, 1e-9, 'Custom VOO officialIrr (9.5) preserved across reload');
+
+  // 11.3 Even when localStorage is blocked/cleared on file://, window.name fallback preserves user inputs across reload
+  const uiMatch = html.match(/<script id="ui">([\s\S]*?)<\/script>/);
+  const makeEl = (id) => ({
+    id: id || '', innerHTML: '', textContent: '', value: '', hidden: false, open: true, className: '', style: {}, clientWidth: 800,
+    classList: { contains: () => true, toggle: () => {} },
+    setAttribute(k, v) { this[k] = v; }, getAttribute(k) { return this[k] || ''; }, hasAttribute(k) { return k in this; },
+    addEventListener() {}, getBoundingClientRect() { return { left: 0, width: 800 }; },
+    querySelector() { return makeEl(); }, querySelectorAll() { return [makeEl(), makeEl(), makeEl()]; }
+  });
+  let winName = '';
+  let docListeners = {};
+  const makeEnv = (lsEnabled) => {
+    const els = {};
+    const getEl = (sel) => { const id = sel.replace(/^#/, ''); if (!els[id]) els[id] = makeEl(id); return els[id]; };
+    const lsStore = {};
+    docListeners = {};
+    const env = Object.assign({}, sandbox, {
+      window: {
+        get name() { return winName; },
+        set name(v) { winName = String(v); },
+        matchMedia: () => ({ matches: false, addEventListener() {} }),
+        addEventListener() {}
+      },
+      document: {
+        documentElement: makeEl('html'), querySelector: getEl, querySelectorAll: () => [], getElementById: getEl,
+        addEventListener(ev, fn) { docListeners[ev] = fn; }
+      },
+      localStorage: {
+        getItem: (k) => lsEnabled ? (lsStore[k] || null) : null,
+        setItem: (k, v) => { if (lsEnabled) lsStore[k] = String(v); }
+      },
+      requestAnimationFrame: (fn) => fn(), setTimeout: () => 1, clearTimeout: () => {}
+    });
+    return { env, els };
+  };
+  // Tab load 1 (with localStorage disabled to simulate restricted file://)
+  const run1 = makeEnv(false);
+  vm.runInNewContext(coreMatch[1] + '\n' + uiMatch[1], run1.env, { filename: 'index.html#r1' });
+  const cashIn = makeEl();
+  cashIn['data-path'] = 'cash.twd';
+  cashIn['data-kind'] = 'num';
+  cashIn.value = '888888';
+  docListeners.input({ target: cashIn });
+  assert(winName.startsWith('finTracker.state:'), 'State persisted to window.name fallback');
+
+  // Tab reload 2 (localStorage still disabled, loads from window.name)
+  const run2 = makeEnv(false);
+  vm.runInNewContext(coreMatch[1] + '\n' + uiMatch[1], run2.env, { filename: 'index.html#r2' });
+  assert(run2.els.cashForm.innerHTML.includes('888,888'), 'Reloaded page restores 888,888 from window.name without reverting to default 300,000');
 });
 
 console.log('\nAll ' + passed + ' test suites passed!');

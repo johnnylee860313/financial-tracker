@@ -237,14 +237,14 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; padding:
     <a href="#sec-overview">總覽</a>
     <a href="#sec-advice">建議</a>
     <a href="#sec-alloc">配置</a>
-    <a href="#sec-projection">預測</a>
     <a href="#sec-tw">台股</a>
     <a href="#sec-us">美股</a>
+    <a href="#sec-projection">預測</a>
     <a href="#sec-cash">現金</a>
     <a href="#sec-loans">負債</a>
     <a href="#sec-targets">目標</a>
-    <a href="#sec-data">資料</a>
     <a href="#sec-history">歷史</a>
+    <a href="#sec-data">資料</a>
   </nav>
 </header>
 
@@ -276,6 +276,31 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; padding:
     </div>
     <div class="panel-body" id="body-sec-alloc">
       <div id="alloc"></div>
+    </div>
+  </section>
+
+  <section id="sec-tw" class="card panel">
+    <div class="card-head panel-head">
+      <h2>台股持股</h2>
+      <button type="button" class="btn small toggle-panel-btn" data-act="toggle-panel" data-panel="sec-tw" aria-expanded="true">收合</button>
+    </div>
+    <div class="panel-body" id="body-sec-tw">
+      <div class="table-wrap"><table id="twTable"></table></div>
+      <div class="row-actions"><button class="btn small" data-act="add-row" data-list="tw">新增標的</button></div>
+    </div>
+  </section>
+
+  <section id="sec-us" class="card panel">
+    <div class="card-head panel-head">
+      <h2>美股持股</h2>
+      <div class="card-head-right">
+        <label class="field" style="width:150px"><span class="field-label">USD/TWD 匯率</span><span id="fxSlotUs"></span></label>
+        <button type="button" class="btn small toggle-panel-btn" data-act="toggle-panel" data-panel="sec-us" aria-expanded="true">收合</button>
+      </div>
+    </div>
+    <div class="panel-body" id="body-sec-us">
+      <div class="table-wrap"><table id="usTable"></table></div>
+      <div class="row-actions"><button class="btn small" data-act="add-row" data-list="us">新增標的</button></div>
     </div>
   </section>
 
@@ -313,31 +338,6 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; padding:
           <p><b>54C 股利可抵減稅額（8.5%）</b>：依所得稅法規定，54C 境內股利併入綜合所得稅申報時，享有 <b>8.5% 可抵減稅額</b>（每申報戶每年抵減上限 <b>NT$80,000</b>），即 <code>min(80,000, 年 54C 股利 × 8.5%)</code>。年度台股股利稅費淨調整 = <code>+ 54C 股利抵減稅額(8.5%) - 二代健保補充保費(2.11%)</code>，於每年底併入台股資產部位複利滾存。</p>
         </div>
       </details>
-    </div>
-  </section>
-
-  <section id="sec-tw" class="card panel">
-    <div class="card-head panel-head">
-      <h2>台股持股</h2>
-      <button type="button" class="btn small toggle-panel-btn" data-act="toggle-panel" data-panel="sec-tw" aria-expanded="true">收合</button>
-    </div>
-    <div class="panel-body" id="body-sec-tw">
-      <div class="table-wrap"><table id="twTable"></table></div>
-      <div class="row-actions"><button class="btn small" data-act="add-row" data-list="tw">新增標的</button></div>
-    </div>
-  </section>
-
-  <section id="sec-us" class="card panel">
-    <div class="card-head panel-head">
-      <h2>美股持股</h2>
-      <div class="card-head-right">
-        <label class="field" style="width:150px"><span class="field-label">USD/TWD 匯率</span><span id="fxSlotUs"></span></label>
-        <button type="button" class="btn small toggle-panel-btn" data-act="toggle-panel" data-panel="sec-us" aria-expanded="true">收合</button>
-      </div>
-    </div>
-    <div class="panel-body" id="body-sec-us">
-      <div class="table-wrap"><table id="usTable"></table></div>
-      <div class="row-actions"><button class="btn small" data-act="add-row" data-list="us">新增標的</button></div>
     </div>
   </section>
 
@@ -406,7 +406,7 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; padding:
 
 <script id="core">
 /* ==== [MODULE: CONFIG] ==== */
-const APP_VERSION = 'v5';
+const APP_VERSION = 'v6';
 const SCHEMA_VERSION = 4;
 const STORAGE_KEY = 'finTracker.state';
 const THEME_KEY = 'finTracker.theme';
@@ -526,13 +526,13 @@ function ensurePinnedDcaPlans(plans, isMigration) {
     if (idx >= 0) {
       used[idx] = true;
       const found = Object.assign({}, def, list[idx], { market: def.market, symbol: def.symbol, pinned: true });
-      if (!(num(found.officialIrr) > 0) || (isMigration && def.symbol === 'VOO' && num(found.officialIrr) === 10)) {
+      if (isMigration && (!(num(found.officialIrr) > 0) || (def.symbol === 'VOO' && num(found.officialIrr) === 10))) {
         found.officialIrr = def.officialIrr;
       }
       if (def.market === 'US') found.domesticDividendRatio = 0;
       return found;
     }
-    return Object.assign({}, def, { monthlyAmount: isMigration ? 0 : def.monthlyAmount });
+    return Object.assign({}, def, { monthlyAmount: 0 });
   });
   const customOut = list.filter(function (p, i) { return !used[i]; }).map(function (p) {
     return Object.assign({}, p, { pinned: false });
@@ -612,7 +612,7 @@ function normalizeState(raw) {
   const d = defaultState();
   if (!isObj(raw)) return d;
   if (raw.twStocks || raw.usStocks || raw.params) raw = migrateV0(raw);
-  const isOldSchema = !raw.schemaVersion || num(raw.schemaVersion) < SCHEMA_VERSION;
+  const isOldSchema = !raw.schemaVersion || num(raw.schemaVersion) < 3;
   const s = deepMerge(d, raw);
   const rows = function (arr, tpl, fallback) {
     return Array.isArray(arr) ? arr.filter(isObj).map(function (r) { return deepMerge(tpl(), r); }) : fallback;
@@ -622,7 +622,8 @@ function normalizeState(raw) {
   s.loans = rows(raw.loans, loanTemplate, d.loans);
   s.cashflows = rows(raw.cashflows, flowTemplate, d.cashflows);
   s.snapshots = rows(raw.snapshots, snapshotTemplate, d.snapshots);
-  if (!(num(s.cash.investYears) > 0)) s.cash.investYears = 3;
+  const hasRawInvestYears = isObj(raw.cash) && raw.cash.investYears !== undefined && raw.cash.investYears !== null && raw.cash.investYears !== '';
+  if (!hasRawInvestYears && !(num(s.cash.investYears) > 0)) s.cash.investYears = 3;
   if (parseDate(s.cash.investYearsAsOf) == null) s.cash.investYearsAsOf = todayStr();
   const rawProj = isObj(raw.projection) ? raw.projection : {};
   if (Array.isArray(rawProj.dcaPlans)) {
@@ -1398,18 +1399,45 @@ function toast(msg) {
 const STATUS_LABEL = { ok: '良好', warn: '注意', bad: '危險', na: '' };
 
 /* ==== [MODULE: STORAGE] ==== */
+const WIN_NAME_PREFIX = STORAGE_KEY + ':';
 const Store = {
-  load: function () {
+  readRaw: function () {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) return normalizeState(JSON.parse(raw));
+      const ls = localStorage.getItem(STORAGE_KEY);
+      if (ls) return ls;
+    } catch (e) {}
+    try {
+      if (typeof sessionStorage !== 'undefined') {
+        const ss = sessionStorage.getItem(STORAGE_KEY);
+        if (ss) return ss;
+      }
+    } catch (e) {}
+    try {
+      if (typeof window !== 'undefined' && typeof window.name === 'string' && window.name.indexOf(WIN_NAME_PREFIX) === 0) {
+        return window.name.slice(WIN_NAME_PREFIX.length);
+      }
+    } catch (e) {}
+    try {
       const legacy = localStorage.getItem(LEGACY_V0_KEY);
-      if (legacy) return normalizeState(JSON.parse(legacy));
-    } catch (e) { /* fall through to defaults */ }
+      if (legacy) return legacy;
+    } catch (e) {}
+    return null;
+  },
+  load: function () {
+    const raw = Store.readRaw();
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (isObj(parsed)) return normalizeState(parsed);
+      } catch (e) {}
+    }
     return defaultState();
   },
   save: function (s) {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch (e) { /* storage full or disabled */ }
+    const json = JSON.stringify(s);
+    try { localStorage.setItem(STORAGE_KEY, json); } catch (e) {}
+    try { if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(STORAGE_KEY, json); } catch (e) {}
+    try { if (typeof window !== 'undefined') window.name = WIN_NAME_PREFIX + json; } catch (e) {}
   }
 };
 
@@ -2078,18 +2106,25 @@ function onFieldInput(el) {
   scheduleUpdate();
 }
 function bindEvents() {
-  document.addEventListener('input', function (e) {
+  const onAnyInput = function (e) {
     const el = e.target;
     if (el && el.hasAttribute && el.hasAttribute('data-path')) onFieldInput(el);
-  });
-  document.addEventListener('change', function (e) {
-    const el = e.target;
-    if (el && el.hasAttribute && el.hasAttribute('data-path') && (el.type === 'checkbox' || el.tagName === 'SELECT' || el.type === 'date')) onFieldInput(el);
-  });
+  };
+  document.addEventListener('input', onAnyInput);
+  document.addEventListener('change', onAnyInput);
+  document.addEventListener('compositionend', onAnyInput);
   document.addEventListener('focusout', function (e) {
     const el = e.target;
+    if (el && el.hasAttribute && el.hasAttribute('data-path')) onFieldInput(el);
     if (el && el.getAttribute && el.getAttribute('data-kind') === 'num') el.value = fmtInput(num(el.value));
   });
+  const flushAndSave = function () {
+    const active = document.activeElement;
+    if (active && active.hasAttribute && active.hasAttribute('data-path')) onFieldInput(active);
+    if (S) Store.save(S);
+  };
+  window.addEventListener('pagehide', flushAndSave);
+  window.addEventListener('beforeunload', flushAndSave);
   document.addEventListener('toggle', function (e) {
     const el = e.target;
     if (el && el.classList && el.classList.contains('amort') && el.open && M) renderAmort(el);
