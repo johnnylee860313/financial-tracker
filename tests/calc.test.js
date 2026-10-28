@@ -351,7 +351,7 @@ test('UI script initializes and renders all 15 metric cards, tables, and SVG cha
 
 // 8. DCA Plans (TW & US Sub-brokerage), Fubon Fee Model, 54C 8.5% Tax Credit, and 2nd-Gen NHI (2.11%)
 test('DCA plans, 0050/VOO/QQQ official IRR defaults, Fubon TW/US DCA fees, 54C 8.5% credit, and 2.11% NHI supplementary tax', () => {
-  assert.strictEqual(core.APP_VERSION, 'v6', 'APP_VERSION must be v6');
+  assert.strictEqual(core.APP_VERSION, 'v7', 'APP_VERSION must be v7');
   assert.strictEqual(core.REF_0050_IRR, 11.8, '0050 reference official CAGR is 11.8%');
   assert.strictEqual(core.REF_VOO_IRR, 14.6, 'VOO reference official CAGR is 14.6%');
   assert.strictEqual(core.REF_QQQ_IRR, 14.2, 'QQQ reference official CAGR is 14.2%');
@@ -401,9 +401,10 @@ test('DCA plans, 0050/VOO/QQQ official IRR defaults, Fubon TW/US DCA fees, 54C 8
     1
   );
   near(taxAbove.annual54c, 42000, 1e-6, 'Annual 54C on 2M');
+  near(taxAbove.incomeTax, 42000 * 0.20, 1e-6, 'Default 20% income tax on 42,000 54C dividend');
   near(taxAbove.nhi, 42000 * 0.0211, 1e-6, 'Above 20,000 per payout -> 2.11% NHI');
   near(taxAbove.credit54c, 42000 * 0.085, 1e-6, '54C 8.5% credit on 42,000');
-  near(taxAbove.netTaxImpact, 42000 * (0.085 - 0.0211), 1e-6, 'Net tax impact = +8.5% credit - 2.11% NHI');
+  near(taxAbove.netTaxImpact, 42000 * (0.085 - 0.20 - 0.0211), 1e-6, 'Net tax impact = +8.5% credit - 20% income tax - 2.11% NHI');
 
   const taxCap = core.calcTwDividendTaxAndNhi(
     [{ balance: 60000000, dividendYield: 3.5, domesticDividendRatio: 60 }],
@@ -695,6 +696,63 @@ test('v6 projection section below TW/US holdings, and reload persistence preserv
   const run2 = makeEnv(false);
   vm.runInNewContext(coreMatch[1] + '\n' + uiMatch[1], run2.env, { filename: 'index.html#r2' });
   assert(run2.els.cashForm.innerHTML.includes('888,888'), 'Reloaded page restores 888,888 from window.name without reverting to default 300,000');
+});
+
+// 12. v7 Requirements: Taiwan Income Tax Bracket Slider (5, 12, 20, 30, 40%) & Realistic Initial + DCA + Tax/54C/NHI Projection
+test('v7 Taiwan income tax bracket slider (5%, 12%, 20%, 30%, 40%) and realistic initial + DCA projection with income tax, 54C credit, and NHI', () => {
+  // 12.1 Brackets & default 20%
+  assert.deepStrictEqual(Array.from(core.TW_TAX_BRACKETS), [5, 12, 20, 30, 40], 'Taiwan statutory income tax brackets must be [5, 12, 20, 30, 40]');
+  assert.strictEqual(core.DEFAULT_TAX_RATE, 20, 'Default income tax rate is 20%');
+  assert.strictEqual(core.defaultState().projection.taxRate, 20, 'defaultState.projection.taxRate is 20');
+  assert.strictEqual(core.snapTaxRate(19), 20, 'snapTaxRate snaps to nearest bracket');
+  assert.strictEqual(core.snapTaxRate(6), 5, 'snapTaxRate snaps 6 to 5');
+  assert.strictEqual(core.snapTaxRate(38), 40, 'snapTaxRate snaps 38 to 40');
+
+  // 12.2 Dividend tax calculation across all 5 brackets (5%, 12%, 20%, 30%, 40%)
+  const bucket = [{ balance: 2000000, dividendYield: 3.5, domesticDividendRatio: 60 }]; // annual54c = 42,000
+  const res5 = core.calcTwDividendTaxAndNhi(bucket, { taxRate: 5, twPayoutFreq: 2, applyNhi: true, apply54cCredit: true }, 1);
+  near(res5.incomeTax, 42000 * 0.05, 1e-6, '5% bracket income tax');
+  near(res5.credit54c, 42000 * 0.085, 1e-6, '8.5% 54C credit');
+  near(res5.nhi, 42000 * 0.0211, 1e-6, '2.11% NHI');
+  assert(res5.netTaxImpact > 0, 'At 5% bracket, 8.5% credit exceeds 5% tax + 2.11% NHI (+1.39% net credit)');
+
+  const res20 = core.calcTwDividendTaxAndNhi(bucket, { taxRate: 20, twPayoutFreq: 2, applyNhi: true, apply54cCredit: true }, 1);
+  near(res20.incomeTax, 42000 * 0.20, 1e-6, '20% bracket income tax');
+  assert(res20.netTaxImpact < 0, 'At 20% bracket, 20% tax + 2.11% NHI - 8.5% credit = -13.61% net tax outflow');
+
+  const res40 = core.calcTwDividendTaxAndNhi(bucket, { taxRate: 40, twPayoutFreq: 2, applyNhi: true, apply54cCredit: true }, 1);
+  near(res40.incomeTax, 42000 * 0.40, 1e-6, '40% bracket income tax');
+  assert(res40.netTaxImpact < res20.netTaxImpact, '40% bracket has higher tax burden than 20% bracket');
+
+  // 12.3 Monotonicity of projected 10/20/30-year assets across tax brackets: 5% > 12% > 20% > 30% > 40%
+  const runForBracket = (taxRate) => {
+    const s = core.defaultState();
+    s.projection.taxRate = taxRate;
+    const m = core.computeAll(s, '2026-10-24');
+    return core.project({
+      assets: m.totalAssets, loans: s.loans, today: '2026-10-24', rate: m.weightedIrr,
+      inflation: 0.02, real: false, years: 30,
+      fx: s.fx.usdTwd, twMV: m.twMV, usMV: m.usMV, twCost: m.twCost, usCost: m.usCost, cash: m.cash,
+      twHoldings: m.tw, usHoldings: m.us, projection: s.projection
+    });
+  };
+  const p5 = runForBracket(5);
+  const p12 = runForBracket(12);
+  const p20 = runForBracket(20);
+  const p30 = runForBracket(30);
+  const p40 = runForBracket(40);
+  assert(
+    p5.rows[30].assets > p12.rows[30].assets &&
+    p12.rows[30].assets > p20.rows[30].assets &&
+    p20.rows[30].assets > p30.rows[30].assets &&
+    p30.rows[30].assets > p40.rows[30].assets,
+    '30-year projected assets strictly decrease as income tax bracket increases: 5% > 12% > 20% > 30% > 40%'
+  );
+
+  // 12.4 Holdings with irr=0 automatically use reference official IRR (0050 11.8%, VOO 14.6%, QQQ 14.2%)
+  assert.strictEqual(core.holdingEffectiveIrr({ symbol: '0050', irr: 0 }, false), 11.8, 'TW holding with irr=0 uses 11.8%');
+  assert.strictEqual(core.holdingEffectiveIrr({ symbol: 'VOO', irr: 0 }, true), 14.6, 'VOO holding with irr=0 uses 14.6%');
+  assert.strictEqual(core.holdingEffectiveIrr({ symbol: 'QQQ', irr: 0 }, true), 14.2, 'QQQ holding with irr=0 uses 14.2%');
 });
 
 console.log('\nAll ' + passed + ' test suites passed!');

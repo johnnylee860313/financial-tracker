@@ -202,6 +202,16 @@ td input.w-date { min-width: 140px; }
 .stack-row { display: grid; grid-template-columns: 40px 1fr; gap: 8px; align-items: center; margin-bottom: 8px; font-size: 12px; color: var(--muted); }
 .proj-controls { display: grid; grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); gap: 10px 12px; align-items: end; margin-bottom: 10px; }
 .proj-toggles { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: center; margin-bottom: 12px; }
+.tax-slider-box { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; }
+.tax-slider-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; color: var(--text); }
+.tax-badge { font-size: 14px; font-weight: 700; color: var(--accent); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 2px 10px; font-variant-numeric: tabular-nums; }
+.tax-slider { width: 100%; margin: 4px 0 8px; accent-color: var(--accent); cursor: pointer; }
+.tax-ticks { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.tax-tick {
+  font: inherit; font-size: 12px; padding: 4px 0; text-align: center; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--surface); color: var(--muted); cursor: pointer; font-variant-numeric: tabular-nums;
+}
+.tax-tick.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 .check-inline { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); cursor: pointer; height: 36px; }
 .proj-summary { font-size: 13px; color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin: 0 0 8px; font-variant-numeric: tabular-nums; }
 .proj-summary b { color: var(--text); }
@@ -333,9 +343,9 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; padding:
           <p><b>現有部位加權年化報酬率</b> = [Σ(標的市值 × 官方年化 IRR) + 現金部位 × 現金年化報酬率] / 資產總值。各定期定額計畫則依該標的設定之「公告複合年化報酬率」（預設固定 0050 為 11.8%、VOO 為 14.6%、QQQ 為 14.2%）獨立複利累積。</p>
           <p><b>實質報酬率</b> = (1 + 名目報酬率) / (1 + 通膨率) - 1。實質模式下，各部位與定期定額皆以實質報酬率成長、每月扣款視為固定購買力，負債與稅費門檻以通膨折算。</p>
           <p><b>富邦證券定期定額手續費模型</b>：台股定期定額法定牌告 0.1425%，富邦現行電子優惠約 1 折（0.01425%），單筆手續費無條件捨去小數點並設有最低收費 1 元（故單筆扣款 14,035 元以內手續費皆僅 1 元），公式為 <code>max(最低手續費, floor(扣款金額 × 0.1425% × 折數 / 10))</code>；美股複委託定期定額富邦現行買進優惠費率為 <b>0.1%</b> 且<b>無最低手續費門檻（無低收）</b>，公式為 <code>扣款金額(USD) × 費率% × 匯率</code>。每月扣款先扣除手續費後再計入投資本金。</p>
-          <p><b>台灣股利法遵稅務與二代健保補充保費（54C 境內股利所得）</b>：針對台股部位（現有台股以 0050 預設參數估算 + 台股定期定額部位），每年預估現金股利 = <code>台股部位市值 × 平均現金殖利率%</code>；其中屬境內股利所得（54C）金額 = <code>年現金股利 × 境內所得佔比%</code>（0050 約 60% 為 54C 境內股利所得，其餘約 40% 為資本利得／平準金免計綜所稅與補充保費）。</p>
-          <p><b>二代健保補充保費（2.11%）</b>：依健保法規定，單次給付 54C 境內股利達 <b>NT$20,000</b>（含）以上（0050 為半年配，每年配息 2 次，單次上限 1,000 萬元），課徵 <b>2.11%</b> 補充保費：若 <code>(年 54C 股利 / 年配息次數) &gt;= 20,000</code>，年補充保費 = <code>min(單次 54C 股利, 10,000,000) × 2.11% × 年配息次數</code>。</p>
-          <p><b>54C 股利可抵減稅額（8.5%）</b>：依所得稅法規定，54C 境內股利併入綜合所得稅申報時，享有 <b>8.5% 可抵減稅額</b>（每申報戶每年抵減上限 <b>NT$80,000</b>），即 <code>min(80,000, 年 54C 股利 × 8.5%)</code>。年度台股股利稅費淨調整 = <code>+ 54C 股利抵減稅額(8.5%) - 二代健保補充保費(2.11%)</code>，於每年底併入台股資產部位複利滾存。</p>
+          <p><b>台灣股利法遵稅務（綜合所得稅級距 5% / 12% / 20% / 30% / 40%、54C 抵減 8.5%、二代健保 2.11%）</b>：針對台股部位（初始台股部位 + 台股定期定額累積部位），每年預估現金股利 = <code>台股部位市值 × 平均現金殖利率%</code>；其中屬境內股利所得（54C）金額 = <code>年現金股利 × 境內所得佔比%</code>（0050 約 60% 為 54C 境內股利所得，其餘約 40% 為資本利得／平準金免計綜所稅與補充保費）。</p>
+          <p><b>綜合所得稅率級距與 54C 股利可抵減稅額（8.5%）</b>：滑軌提供台灣現行五個綜合所得稅率級距（<b>5%、12%、20%、30%、40%</b>，預設 <b>20%</b>）。當年度股利綜所稅額 = <code>年 54C 股利 × 選取所得稅率%</code>；同時享有 <b>8.5% 可抵減稅額</b>（每申報戶每年上限 <b>NT$80,000</b>），即 <code>min(80,000, 年 54C 股利 × 8.5%)</code>。</p>
+          <p><b>二代健保補充保費（2.11%）與年度稅費淨影響</b>：單次給付 54C 境內股利達 <b>NT$20,000</b>（含）以上（0050 為半年配，每年 2 次，單次上限 1,000 萬元）課徵 <b>2.11%</b> 補充保費。年度台股股利稅費淨調整 = <code>+ 54C 股利抵減稅額(8.5%, 上限8萬) - 股利綜所稅(54C × 所得稅率%) - 二代健保補充保費(2.11%)</code>，於每年底併入台股資產部位複利滾存。</p>
         </div>
       </details>
     </div>
@@ -406,7 +416,7 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; padding:
 
 <script id="core">
 /* ==== [MODULE: CONFIG] ==== */
-const APP_VERSION = 'v6';
+const APP_VERSION = 'v7';
 const SCHEMA_VERSION = 4;
 const STORAGE_KEY = 'finTracker.state';
 const THEME_KEY = 'finTracker.theme';
@@ -434,6 +444,19 @@ const NHI_THRESHOLD = 20000;
 const NHI_CAP = 10000000;
 const TAX_54C_CREDIT_RATE = 0.085;
 const TAX_54C_CREDIT_CAP = 80000;
+const TW_TAX_BRACKETS = [5, 12, 20, 30, 40];
+const DEFAULT_TAX_RATE = 20;
+function snapTaxRate(v) {
+  if (v === undefined || v === null || v === '') return DEFAULT_TAX_RATE;
+  const n = num(v);
+  let best = TW_TAX_BRACKETS[0];
+  let minDiff = Math.abs(n - best);
+  for (let i = 1; i < TW_TAX_BRACKETS.length; i++) {
+    const d = Math.abs(n - TW_TAX_BRACKETS[i]);
+    if (d < minDiff) { minDiff = d; best = TW_TAX_BRACKETS[i]; }
+  }
+  return best;
+}
 
 /* ==== [MODULE: UTIL] ==== */
 function num(x) {
@@ -558,6 +581,7 @@ function emptyState() {
     },
     projection: {
       monthly: 0, cashRate: 1, real: false, years: 30,
+      taxRate: DEFAULT_TAX_RATE,
       fubonTwDiscount: 1, fubonTwMinFee: 1, fubonUsFeeRate: 0.1,
       twPayoutFreq: 2, applyNhi: true, apply54cCredit: true,
       dcaPlans: PINNED_DCA_DEFAULTS.map(function (p) { return Object.assign({}, p, { monthlyAmount: 0 }); })
@@ -626,6 +650,7 @@ function normalizeState(raw) {
   if (!hasRawInvestYears && !(num(s.cash.investYears) > 0)) s.cash.investYears = 3;
   if (parseDate(s.cash.investYearsAsOf) == null) s.cash.investYearsAsOf = todayStr();
   const rawProj = isObj(raw.projection) ? raw.projection : {};
+  s.projection.taxRate = snapTaxRate(rawProj.taxRate);
   if (Array.isArray(rawProj.dcaPlans)) {
     const parsedPlans = rawProj.dcaPlans.filter(isObj).map(function (r) {
       const mkt = r.market === 'US' ? 'US' : 'TW';
@@ -855,16 +880,25 @@ function avgAnnualFromSnapshots(snapshots, contributions) {
 }
 
 /* ==== [MODULE: CALC] ==== */
+function holdingEffectiveIrr(h, isUs) {
+  const raw = num(h && h.irr);
+  if (raw > 0) return raw;
+  const sym = String((h && h.symbol) || '').trim().toUpperCase();
+  if (sym === 'QQQ') return REF_QQQ_IRR;
+  if (sym === 'VOO' || isUs) return REF_VOO_IRR;
+  return REF_0050_IRR;
+}
 function holdingCalc(h, fx) {
   const sh = num(h.shares), avg = num(h.avg), rawPx = num(h.price);
   const px = rawPx > 0 ? rawPx : avg;
   const lev = num(h.lev) || 1;
   const mvLocal = sh * px, costLocal = sh * avg;
   const mv = mvLocal * fx, cost = costLocal * fx;
+  const effIrr = holdingEffectiveIrr(h, fx !== 1);
   return {
     mvLocal: mvLocal, costLocal: costLocal, mv: mv, cost: cost, pl: mv - cost,
     ret: costLocal > 0 ? (mvLocal - costLocal) / costLocal : null,
-    lev: lev, exposure: mv * lev, pledged: !!h.pledged, irr: num(h.irr) / 100
+    lev: lev, exposure: mv * lev, pledged: !!h.pledged, irr: effIrr / 100
   };
 }
 function sumBy(arr, k) { return arr.reduce(function (a, x) { return a + (num(x[k])); }, 0); }
@@ -1044,11 +1078,12 @@ function calcFubonDcaFee(plan, fx, projCfg) {
   const feeTwd = Math.min(amt, Math.max(minFee, rawFee));
   return { grossTwd: amt, feeTwd: feeTwd, netTwd: Math.max(0, amt - feeTwd), feeLocal: feeTwd };
 }
-/* Compute annual TW dividend, 54C domestic dividend, 2nd-gen NHI supplementary premium (2.11% if single payout >= 20,000), and 54C 8.5% tax credit (cap 80,000) */
+/* Compute annual TW dividend, 54C domestic dividend, income tax by bracket (5/12/20/30/40%), 2nd-gen NHI (2.11% if single payout >= 20,000), and 54C 8.5% tax credit (cap 80,000) */
 function calcTwDividendTaxAndNhi(twBuckets, projCfg, realScale) {
   const cfg = isObj(projCfg) ? projCfg : {};
   const freq = Math.max(1, Math.round(num(cfg.twPayoutFreq) || 2));
   const scale = (realScale != null && realScale > 0) ? realScale : 1;
+  const taxRatePct = cfg.taxRate !== undefined && cfg.taxRate !== null && cfg.taxRate !== '' ? Math.max(0, num(cfg.taxRate)) : DEFAULT_TAX_RATE;
   let annualDiv = 0, annual54c = 0;
   (twBuckets || []).forEach(function (b) {
     const bal = Math.max(0, num(b.balance));
@@ -1058,6 +1093,7 @@ function calcTwDividendTaxAndNhi(twBuckets, projCfg, realScale) {
     annualDiv += div;
     annual54c += div * r54c;
   });
+  const incomeTaxNom = (annual54c * scale) * (taxRatePct / 100);
   const single54cNom = (annual54c * scale) / freq;
   let nhiNom = 0;
   if (cfg.applyNhi !== false && single54cNom >= NHI_THRESHOLD) {
@@ -1067,14 +1103,17 @@ function calcTwDividendTaxAndNhi(twBuckets, projCfg, realScale) {
   if (cfg.apply54cCredit !== false && annual54c > 0) {
     creditNom = Math.min(TAX_54C_CREDIT_CAP, (annual54c * scale) * TAX_54C_CREDIT_RATE);
   }
+  const incomeTax = incomeTaxNom / scale;
   const nhi = nhiNom / scale;
   const credit54c = creditNom / scale;
   return {
     annualDiv: annualDiv,
     annual54c: annual54c,
+    taxRate: taxRatePct,
+    incomeTax: incomeTax,
     nhi: nhi,
     credit54c: credit54c,
-    netTaxImpact: credit54c - nhi
+    netTaxImpact: credit54c - incomeTax - nhi
   };
 }
 /* opts: {assets, loans, today, rate (decimal), inflation (decimal), real, monthly, years, fx, twMV, usMV, cash, twHoldings, usHoldings, projection} */
@@ -1157,11 +1196,11 @@ function project(opts) {
   const dcaMonthlyFeeTwd = plans.reduce(function (a, p) { return a + p.feeTwd; }, 0);
   const dcaMonthlyNetTwd = plans.reduce(function (a, p) { return a + p.netTwd; }, 0);
 
-  let cumInvested = 0, cumFee = 0, cumNhi = 0, cum54cCredit = 0;
+  let cumInvested = 0, cumFee = 0, cumIncomeTax = 0, cumNhi = 0, cum54cCredit = 0;
   const rows = [];
 
   for (let y = 0; y <= years; y++) {
-    let annualFee = 0, annualDiv = 0, annual54c = 0, annualNhi = 0, annual54cCredit = 0;
+    let annualFee = 0, annualDiv = 0, annual54c = 0, annualIncomeTax = 0, annualNhi = 0, annual54cCredit = 0;
     const realScale = real ? Math.pow(1 + infl, y) : 1;
 
     if (y > 0) {
@@ -1186,8 +1225,10 @@ function project(opts) {
       const taxRes = calcTwDividendTaxAndNhi(twBuckets, projCfg, realScale);
       annualDiv = taxRes.annualDiv;
       annual54c = taxRes.annual54c;
+      annualIncomeTax = taxRes.incomeTax;
       annualNhi = taxRes.nhi;
       annual54cCredit = taxRes.credit54c;
+      cumIncomeTax += annualIncomeTax;
       cumNhi += annualNhi;
       cum54cCredit += annual54cCredit;
 
@@ -1204,6 +1245,7 @@ function project(opts) {
       const initTax = calcTwDividendTaxAndNhi(initBuckets, projCfg, 1);
       annualDiv = initTax.annualDiv;
       annual54c = initTax.annual54c;
+      annualIncomeTax = initTax.incomeTax;
       annualNhi = initTax.nhi;
       annual54cCredit = initTax.credit54c;
     }
@@ -1219,8 +1261,8 @@ function project(opts) {
       twAssets: twBase + dcaTwTotal, usAssets: usBase + dcaUsTotal, cashAssets: cashBase,
       totalCost: initHoldingsCost + cumInvested,
       annualFee: annualFee, annualDiv: annualDiv, annual54c: annual54c,
-      annualNhi: annualNhi, annual54cCredit: annual54cCredit,
-      cumInvested: cumInvested, cumFee: cumFee, cumNhi: cumNhi, cum54cCredit: cum54cCredit
+      annualIncomeTax: annualIncomeTax, annualNhi: annualNhi, annual54cCredit: annual54cCredit,
+      cumInvested: cumInvested, cumFee: cumFee, cumIncomeTax: cumIncomeTax, cumNhi: cumNhi, cum54cCredit: cum54cCredit
     });
   }
 
@@ -1345,6 +1387,7 @@ if (typeof module !== 'undefined' && module.exports) {
     REF_QQQ_IRR: REF_QQQ_IRR, REF_QQQ_YIELD: REF_QQQ_YIELD,
     REF_US_IRR: REF_US_IRR, REF_US_YIELD: REF_US_YIELD,
     PINNED_DCA_DEFAULTS: PINNED_DCA_DEFAULTS,
+    TW_TAX_BRACKETS: TW_TAX_BRACKETS, DEFAULT_TAX_RATE: DEFAULT_TAX_RATE, snapTaxRate: snapTaxRate,
     FUBON_TW_BASE_RATE: FUBON_TW_BASE_RATE, NHI_SUPP_RATE: NHI_SUPP_RATE, NHI_THRESHOLD: NHI_THRESHOLD,
     TAX_54C_CREDIT_RATE: TAX_54C_CREDIT_RATE, TAX_54C_CREDIT_CAP: TAX_54C_CREDIT_CAP,
     num: num, parseDate: parseDate, toDateStr: toDateStr, todayStr: todayStr, projYearYm: projYearYm, fmtNum: fmtNum, fmtPct: fmtPct, fmtCompact: fmtCompact,
@@ -1354,7 +1397,7 @@ if (typeof module !== 'undefined' && module.exports) {
     loanPayment: loanPayment, loanBalance: loanBalance, loanSummary: loanSummary, loanPaidCount: loanPaidCount,
     amortSchedule: amortSchedule, monthsElapsed: monthsElapsed,
     xirr: xirr, modifiedDietz: modifiedDietz, cagrFromCashflows: cagrFromCashflows, avgAnnualFromSnapshots: avgAnnualFromSnapshots,
-    effectiveInvestYears: effectiveInvestYears, computeAll: computeAll, weightedIrr: weightedIrr, realRate: realRate,
+    effectiveInvestYears: effectiveInvestYears, holdingEffectiveIrr: holdingEffectiveIrr, computeAll: computeAll, weightedIrr: weightedIrr, realRate: realRate,
     dcaEffectiveIrr: dcaEffectiveIrr, calcFubonDcaFee: calcFubonDcaFee, calcTwDividendTaxAndNhi: calcTwDividendTaxAndNhi,
     project: project,
     buildAdvice: buildAdvice, makeSnapshot: makeSnapshot, upsertSnapshot: upsertSnapshot
@@ -1514,7 +1557,7 @@ function renderHoldings(kind) {
       '<td class="r">' + inNum(p + 'price', r.price, 'w-num', '現價') + '</td>' +
       '<td class="r">' + inNum(p + 'lev', r.lev, 'w-sm', '槓桿倍數') + '</td>' +
       '<td class="c">' + inCheck(p + 'pledged', r.pledged, '質押') + '</td>' +
-      '<td class="r">' + inNum(p + 'irr', r.irr, 'w-sm', '官方年化 IRR') + '</td>' +
+      '<td class="r">' + inNum(p + 'irr', r.irr, 'w-sm' + (num(r.irr) > 0 ? '' : ' is-ref'), '官方年化 IRR', holdingEffectiveIrr(r, usd) + ' (參考)') + '</td>' +
       '<td class="r" id="' + kind + '-' + i + '-mv"></td>' +
       '<td class="r" id="' + kind + '-' + i + '-cost"></td>' +
       '<td class="r" id="' + kind + '-' + i + '-pl"></td>' +
@@ -1626,7 +1669,20 @@ function renderDcaPlans() {
 }
 function renderProjControls() {
   renderDcaPlans();
+  const curTax = snapTaxRate(S.projection.taxRate);
+  const taxIdx = Math.max(0, TW_TAX_BRACKETS.indexOf(curTax));
+  const ticksHtml = TW_TAX_BRACKETS.map(function (b) {
+    return '<button type="button" class="tax-tick' + (b === curTax ? ' on' : '') + '" data-act="tax-bracket" data-rate="' + b + '">' + b + '%</button>';
+  }).join('');
   $('#projControls').innerHTML =
+    '<div class="tax-slider-box">' +
+      '<div class="tax-slider-head">' +
+        '<span>綜合所得稅率級距（依台灣現行 5 級距計算股利綜所稅與 54C 抵減）</span>' +
+        '<span class="tax-badge" id="taxRateBadge">' + curTax + '%</span>' +
+      '</div>' +
+      '<input type="range" class="tax-slider" id="taxRateSlider" min="0" max="' + (TW_TAX_BRACKETS.length - 1) + '" step="1" value="' + taxIdx + '" aria-label="綜合所得稅率級距">' +
+      '<div class="tax-ticks" role="group" aria-label="所得稅率級距選擇">' + ticksHtml + '</div>' +
+    '</div>' +
     '<div class="proj-controls">' +
     field('富邦台股定期定額折數 (折)', inNum('projection.fubonTwDiscount', S.projection.fubonTwDiscount, '', '富邦台股手續費折數', '1')) +
     field('台股定期定額最低手續費 (元)', inNum('projection.fubonTwMinFee', S.projection.fubonTwMinFee, '', '台股最低手續費', '1')) +
@@ -1813,6 +1869,7 @@ function computeProjection() {
 }
 function renderProjection() {
   const infl = num(S.targets.inflation) / 100;
+  const curTax = snapTaxRate(S.projection.taxRate);
   const sumEl = $('#projSummary');
   if (sumEl) {
     sumEl.innerHTML = '起始台股市值 <b>' + fmtNum(M.twMV) + '</b> 元（成本 <b>' + fmtNum(M.twCost) + '</b> 元）｜起始美股市值 <b>' +
@@ -1820,11 +1877,11 @@ function renderProjection() {
       fmtNum(M.totalAssets) + '</b> 元｜起始淨值 <b>' + fmtNum(M.netWorth) + '</b> 元（未實現損益 <b>' + fmtSigned(M.totalPL) + '</b> 元）';
   }
   $('#projRate').innerHTML = '現有部位加權名目年化 <b>' + fmtPct(M.weightedIrr) + '</b>，實質 <b>' + fmtPct(realRate(M.weightedIrr, infl)) +
-    '</b>（通膨 ' + fmtPct(infl, 1) + '）｜每月定期定額總扣款 <b>' + fmtNum(P.dcaMonthlyGrossTwd) + '</b> 元（富邦手續費 <b>' +
+    '</b>（通膨 ' + fmtPct(infl, 1) + '）｜綜所稅率級距 <b>' + curTax + '%</b>｜每月定期定額總扣款 <b>' + fmtNum(P.dcaMonthlyGrossTwd) + '</b> 元（富邦手續費 <b>' +
     fmtNum(P.dcaMonthlyFeeTwd, 1) + '</b> 元，淨投入 <b>' + fmtNum(P.dcaMonthlyNetTwd) + '</b> 元）';
   const marks = [5, 10, 15, 20, 25, 30];
   let h = '<thead><tr><th>年度</th><th class="r">資產</th><th class="r">負債</th><th class="r">淨值</th>' +
-    '<th class="r">當年度 54C 股利</th><th class="r">當年度二代健保 (2.11%)</th><th class="r">當年度 54C 抵減 (8.5%)</th><th class="r">累計手續費</th></tr></thead><tbody>';
+    '<th class="r">當年度 54C 股利</th><th class="r">當年度股利綜所稅 (' + curTax + '%)</th><th class="r">當年度 54C 抵減 (8.5%)</th><th class="r">當年度二代健保 (2.11%)</th><th class="r">累計手續費</th></tr></thead><tbody>';
   [0].concat(marks).forEach(function (y) {
     const r = P.rows[y];
     if (!r) return;
@@ -1832,8 +1889,8 @@ function renderProjection() {
     const yrCell = (y === 0 ? '現在' : '第 ' + y + ' 年') + '<sub class="yr-sub">' + esc(ym) + '</sub>';
     h += '<tr' + (y % 10 === 0 && y > 0 ? ' class="hl"' : '') + '><td>' + yrCell + '</td><td class="r">' +
       fmtNum(r.assets) + '</td><td class="r">' + fmtNum(r.debt) + '</td><td class="r">' + fmtNum(r.netWorth) + '</td><td class="r">' +
-      fmtNum(r.annual54c) + '</td><td class="r">' + (r.annualNhi > 0 ? '-' + fmtNum(r.annualNhi) : '0') + '</td><td class="r">' +
-      (r.annual54cCredit > 0 ? '+' + fmtNum(r.annual54cCredit) : '0') + '</td><td class="r">' + fmtNum(r.cumFee) + '</td></tr>';
+      fmtNum(r.annual54c) + '</td><td class="r">' + (r.annualIncomeTax > 0 ? '-' + fmtNum(r.annualIncomeTax) : '0') + '</td><td class="r">' +
+      (r.annual54cCredit > 0 ? '+' + fmtNum(r.annual54cCredit) : '0') + '</td><td class="r">' + (r.annualNhi > 0 ? '-' + fmtNum(r.annualNhi) : '0') + '</td><td class="r">' + fmtNum(r.cumFee) + '</td></tr>';
   });
   $('#projTable').innerHTML = h + '</tbody>';
 }
@@ -2105,10 +2162,30 @@ function onFieldInput(el) {
   });
   scheduleUpdate();
 }
+function syncTaxSliderUI(rate) {
+  const curTax = snapTaxRate(rate);
+  const idx = Math.max(0, TW_TAX_BRACKETS.indexOf(curTax));
+  const badge = $('#taxRateBadge');
+  if (badge) badge.textContent = curTax + '%';
+  const slider = $('#taxRateSlider');
+  if (slider && String(slider.value) !== String(idx)) slider.value = String(idx);
+  $all('.tax-tick').forEach(function (btn) {
+    const on = num(btn.getAttribute('data-rate')) === curTax;
+    if (btn.classList && btn.classList.toggle) btn.classList.toggle('on', on);
+  });
+}
 function bindEvents() {
   const onAnyInput = function (e) {
     const el = e.target;
-    if (el && el.hasAttribute && el.hasAttribute('data-path')) onFieldInput(el);
+    if (!el) return;
+    if (el.id === 'taxRateSlider') {
+      const idx = clamp(Math.round(num(el.value)), 0, TW_TAX_BRACKETS.length - 1);
+      S.projection.taxRate = TW_TAX_BRACKETS[idx];
+      syncTaxSliderUI(S.projection.taxRate);
+      scheduleUpdate();
+      return;
+    }
+    if (el.hasAttribute && el.hasAttribute('data-path')) onFieldInput(el);
   };
   document.addEventListener('input', onAnyInput);
   document.addEventListener('change', onAnyInput);
@@ -2180,6 +2257,10 @@ function bindEvents() {
     } else if (act === 'proj-mode') {
       S.projection.real = btn.getAttribute('data-real') === '1';
       renderProjControls();
+      update();
+    } else if (act === 'tax-bracket') {
+      S.projection.taxRate = snapTaxRate(btn.getAttribute('data-rate'));
+      syncTaxSliderUI(S.projection.taxRate);
       update();
     } else if (act === 'legend') {
       const c = btn.getAttribute('data-chart'), k = btn.getAttribute('data-key');
