@@ -346,12 +346,12 @@ test('UI script initializes and renders all 15 metric cards, tables, and SVG cha
   assert(elements.projChart.innerHTML.includes('<svg'), 'Projection SVG chart rendered');
   assert(elements.histChart.innerHTML.includes('<svg'), 'History SVG chart rendered');
   assert(elements.projTable.innerHTML.includes('第 10 年') && elements.projTable.innerHTML.includes('第 20 年') && elements.projTable.innerHTML.includes('第 30 年'), 'Projection 10/20/30yr rows rendered');
-  assert(storage['finTracker.state'], 'State saved to localStorage');
+  assert(!storage['finTracker.state'], 'Read-only boot must NOT overwrite localStorage with defaultState');
 });
 
 // 8. DCA Plans (TW & US Sub-brokerage), Fubon Fee Model, 54C 8.5% Tax Credit, and 2nd-Gen NHI (2.11%)
 test('DCA plans, 0050/VOO/QQQ official IRR defaults, Fubon TW/US DCA fees, 54C 8.5% credit, and 2.11% NHI supplementary tax', () => {
-  assert.strictEqual(core.APP_VERSION, 'v7', 'APP_VERSION must be v7');
+  assert.strictEqual(core.APP_VERSION, 'v8', 'APP_VERSION must be v8');
   assert.strictEqual(core.REF_0050_IRR, 11.8, '0050 reference official CAGR is 11.8%');
   assert.strictEqual(core.REF_VOO_IRR, 14.6, 'VOO reference official CAGR is 14.6%');
   assert.strictEqual(core.REF_QQQ_IRR, 14.2, 'QQQ reference official CAGR is 14.2%');
@@ -589,12 +589,13 @@ test('v4 rolling horizon date subscripts (YYYY/MM) in table & SVG chart, auto-ad
   assert(sumAt14.balance < sumAt12.balance, 'loanSummary.balance automatically decreases after 2 months');
   near(sumAt14.balance, core.loanBalance(1000000, 3, 84, 14), 1e-6, 'loanSummary.balance matches k=14');
 
-  // Manual edit of loans.0.paid resets paidAsOf to todayStr()
+  // Manual edit of loans.0.paid resets paidAsOf to todayStr() and flushes on focusout
   const paidInput = makeEl();
   paidInput['data-path'] = 'loans.0.paid';
   paidInput['data-kind'] = 'num';
   paidInput.value = '20';
   docListeners.input({ target: paidInput });
+  docListeners.focusout({ target: paidInput });
   const savedAfterLoanEdit = JSON.parse(storage['finTracker.state']);
   assert.strictEqual(savedAfterLoanEdit.loans[0].paid, 20, 'Editing paid updates loan.paid to 20');
   assert.strictEqual(savedAfterLoanEdit.loans[0].paidAsOf, core.todayStr(), 'Editing paid resets loan.paidAsOf to todayStr()');
@@ -620,6 +621,7 @@ test('v4 rolling horizon date subscripts (YYYY/MM) in table & SVG chart, auto-ad
   yrsInput['data-kind'] = 'num';
   yrsInput.value = '4.5';
   docListeners.input({ target: yrsInput });
+  docListeners.focusout({ target: yrsInput });
   const savedAfterYrsEdit = JSON.parse(storage['finTracker.state']);
   near(savedAfterYrsEdit.cash.investYears, 4.5, 1e-6, 'Editing investYears updates cash.investYears to 4.5');
   assert.strictEqual(savedAfterYrsEdit.cash.investYearsAsOf, core.todayStr(), 'Editing investYears resets cash.investYearsAsOf to todayStr()');
@@ -647,7 +649,7 @@ test('v6 projection section below TW/US holdings, and reload persistence preserv
   assert.strictEqual(reloaded.projection.dcaPlans[0].officialIrr, 0, 'User-cleared officialIrr (0) is NOT overwritten by 11.8 on reload');
   near(reloaded.projection.dcaPlans[1].officialIrr, 9.5, 1e-9, 'Custom VOO officialIrr (9.5) preserved across reload');
 
-  // 11.3 Even when localStorage is blocked/cleared on file://, window.name fallback preserves user inputs across reload
+  // 11.3 Even when BOTH localStorage and history.replaceState are blocked (e.g. restricted file:// WebView), compact window.name fallback preserves user inputs across reload
   const uiMatch = html.match(/<script id="ui">([\s\S]*?)<\/script>/);
   const makeEl = (id) => ({
     id: id || '', innerHTML: '', textContent: '', value: '', hidden: false, open: true, className: '', style: {}, clientWidth: 800,
@@ -682,7 +684,7 @@ test('v6 projection section below TW/US holdings, and reload persistence preserv
     });
     return { env, els };
   };
-  // Tab load 1 (with localStorage disabled to simulate restricted file://)
+  // Tab load 1 (with localStorage & history disabled to simulate restricted file://)
   const run1 = makeEnv(false);
   vm.runInNewContext(coreMatch[1] + '\n' + uiMatch[1], run1.env, { filename: 'index.html#r1' });
   const cashIn = makeEl();
@@ -690,12 +692,14 @@ test('v6 projection section below TW/US holdings, and reload persistence preserv
   cashIn['data-kind'] = 'num';
   cashIn.value = '888888';
   docListeners.input({ target: cashIn });
-  assert(winName.startsWith('finTracker.state:'), 'State persisted to window.name fallback');
+  docListeners.focusout({ target: cashIn });
+  assert(winName.startsWith('finTracker.state#'), 'State persisted to compact window.name fallback (< 1KB)');
+  assert(winName.length < 1000, 'Compact window.name fallback uses minimal memory (< 1000 chars)');
 
   // Tab reload 2 (localStorage still disabled, loads from window.name)
   const run2 = makeEnv(false);
   vm.runInNewContext(coreMatch[1] + '\n' + uiMatch[1], run2.env, { filename: 'index.html#r2' });
-  assert(run2.els.cashForm.innerHTML.includes('888,888'), 'Reloaded page restores 888,888 from window.name without reverting to default 300,000');
+  assert(run2.els.cashForm.innerHTML.includes('888,888'), 'Reloaded page restores 888,888 from compact window.name without reverting to default 300,000');
 });
 
 // 12. v7 Requirements: Taiwan Income Tax Bracket Slider (5, 12, 20, 30, 40%) & Realistic Initial + DCA + Tax/54C/NHI Projection
@@ -753,6 +757,298 @@ test('v7 Taiwan income tax bracket slider (5%, 12%, 20%, 30%, 40%) and realistic
   assert.strictEqual(core.holdingEffectiveIrr({ symbol: '0050', irr: 0 }, false), 11.8, 'TW holding with irr=0 uses 11.8%');
   assert.strictEqual(core.holdingEffectiveIrr({ symbol: 'VOO', irr: 0 }, true), 14.6, 'VOO holding with irr=0 uses 14.6%');
   assert.strictEqual(core.holdingEffectiveIrr({ symbol: 'QQQ', irr: 0 }, true), 14.2, 'QQQ holding with irr=0 uses 14.2%');
+});
+
+// 13. v8 Requirements: iOS Safari background Jetsam reload resilience (Private & Normal Browsing), low-memory I/O coalescing, IndexedDB transient-handle recovery, and security hardening
+test('v8 iOS Safari background eviction survival (Private & Normal), low-memory debounced I/O, transient IndexedDB, and security hardening', () => {
+  // 13.1 Compact Tuple + Base64URL codec (< 800 bytes for full portfolio, full Traditional Chinese + surrogate pair fidelity)
+  const sample = core.defaultState();
+  sample.updatedAt = 1793435000000;
+  sample.cash.twd = 1234567;
+  sample.tw[0].name = '元大台灣50測試𠀋'; // includes CJK Extension B astral plane surrogate pair
+  sample.projection.taxRate = 30;
+  sample.projection.real = true;
+  const encoded = core.encodeStateHash(sample);
+  assert(encoded.length > 0 && encoded.length < 900, 'Full portfolio hash must be ultra-compact (< 900 chars), got ' + encoded.length);
+  const decoded = core.decodeStateHash('#s=' + encoded);
+  assert(decoded, 'decodeStateHash must decode #s= token');
+  assert.strictEqual(decoded.updatedAt, 1793435000000);
+  assert.strictEqual(decoded.cash.twd, 1234567);
+  assert.strictEqual(decoded.tw[0].name, '元大台灣50測試𠀋');
+  assert.strictEqual(decoded.projection.taxRate, 30);
+  assert.strictEqual(decoded.projection.real, true);
+  assert.strictEqual(core.decodeStateHash('#sec-tw'), null, 'Anchor hash #sec-tw must return null');
+  assert.strictEqual(core.decodeStateHash('#s=!!!invalid!!!'), null, 'Invalid Base64URL must return null safely');
+  assert.strictEqual(core.decodeStateHash('#s=' + 'A'.repeat(core.MAX_HASH_CHARS + 10)), null, 'Oversized hash must be rejected in O(1)');
+
+  // 13.2 Simulate iOS Safari PRIVATE BROWSING background Jetsam eviction:
+  // User edits field -> switches app (visibilitychange -> hidden, no focusout!) -> OS kills WebContent & wipes localStorage/sessionStorage/window.name -> Safari reloads preserved tab URL (#s=...)
+  const uiMatch = html.match(/<script id="ui">([\s\S]*?)<\/script>/);
+  const makeEl = (id) => ({
+    id: id || '', innerHTML: '', textContent: '', value: '', hidden: false, open: true, className: '', style: {}, clientWidth: 800,
+    classList: { contains: () => true, toggle: () => {} },
+    setAttribute(k, v) { this[k] = v; }, getAttribute(k) { return this[k] || ''; }, hasAttribute(k) { return k in this; },
+    addEventListener() {}, getBoundingClientRect() { return { left: 0, width: 800 }; },
+    querySelector() { return makeEl(); }, querySelectorAll() { return [makeEl(), makeEl(), makeEl()]; }
+  });
+
+  function createSafariSim(opts) {
+    const els = {};
+    const getEl = (sel) => { const id = sel.replace(/^#/, ''); if (!els[id]) els[id] = makeEl(id); return els[id]; };
+    const docListeners = {};
+    const winListeners = {};
+    let pendingTimerFn = null;
+    let lsWrites = 0;
+    let replaceStateCalls = 0;
+    let idbClosedCount = 0;
+    let idbOpenCount = 0;
+    const idbQueue = [];
+    const loc = { href: 'https://johnnylee860313.github.io/financial-tracker/' + (opts.hash || ''), pathname: '/financial-tracker/', search: '', hash: opts.hash || '' };
+    const doc = {
+      visibilityState: 'visible',
+      activeElement: null,
+      documentElement: makeEl('html'),
+      querySelector: getEl,
+      querySelectorAll: () => [],
+      getElementById: getEl,
+      addEventListener(ev, fn) { docListeners[ev] = fn; }
+    };
+    const historyObj = {
+      replaceState(stateObj, title, url) {
+        assert.strictEqual(stateObj, null, 'history.replaceState must pass null stateObj to avoid duplicate PageState memory in Safari UIProcess');
+        if (opts.replaceStateThrow) throw new Error('SecurityError: Attempt to use history.replaceState() more than 100 times per 30 seconds');
+        replaceStateCalls++;
+        const u = String(url);
+        loc.hash = u.startsWith('#') ? u : '';
+        loc.href = 'https://johnnylee860313.github.io/financial-tracker/' + loc.hash;
+      }
+    };
+    const idbMock = opts.idbData !== undefined ? {
+      open() {
+        idbOpenCount++;
+        const req = {};
+        idbQueue.push(() => {
+          const db = {
+            objectStoreNames: { contains: () => true },
+            close() { idbClosedCount++; },
+            transaction() {
+              const tx = {};
+              const store = {
+                put(val) { opts.idbData.val = val; idbQueue.push(() => tx.oncomplete && tx.oncomplete()); return {}; },
+                get() { const r = { result: opts.idbData.val }; idbQueue.push(() => tx.oncomplete && tx.oncomplete()); return r; }
+              };
+              return Object.assign(tx, { objectStore: () => store });
+            }
+          };
+          req.result = db;
+          if (req.onsuccess) req.onsuccess();
+        });
+        return req;
+      }
+    } : undefined;
+
+    const env = Object.assign({}, sandbox, {
+      window: {
+        name: '',
+        location: loc,
+        history: historyObj,
+        matchMedia: () => ({ matches: false, addEventListener() {} }),
+        addEventListener(ev, fn) { winListeners[ev] = fn; }
+      },
+      history: historyObj,
+      document: doc,
+      indexedDB: idbMock,
+      confirm: opts.confirmFn || undefined,
+      localStorage: {
+        getItem(k) {
+          if (opts.throwOnRead) throw new Error('SecurityError');
+          return opts.ls[k] || null;
+        },
+        setItem(k, v) {
+          lsWrites++;
+          if (opts.privateQuotaThrow) throw new Error('QuotaExceededError');
+          opts.ls[k] = String(v);
+        },
+        removeItem(k) {
+          delete opts.ls[k];
+        }
+      },
+      requestAnimationFrame: (fn) => { fn(); return 1; },
+      cancelAnimationFrame: () => {},
+      setTimeout: (fn) => { pendingTimerFn = fn; return 1; },
+      clearTimeout: () => { pendingTimerFn = null; }
+    });
+    vm.runInNewContext(coreMatch[1] + '\n' + uiMatch[1], env, { filename: 'index.html#safari-sim' });
+    return {
+      els, doc, loc, docListeners, winListeners,
+      flushTimer() { if (pendingTimerFn) { const f = pendingTimerFn; pendingTimerFn = null; f(); } },
+      flushIdb() { while (idbQueue.length) { const fn = idbQueue.shift(); fn(); } },
+      stats: () => ({ lsWrites, replaceStateCalls, idbOpenCount, idbClosedCount, winName: env.window.name })
+    };
+  }
+
+  // Step A: Private Browsing session 1 — user types 10 rapid keystrokes, then switches apps WITHOUT blurring input!
+  let ephemeralLs = {};
+  const priv1 = createSafariSim({ ls: ephemeralLs, hash: '' });
+  assert.strictEqual(priv1.stats().lsWrites, 0, 'Boot writes 0 times to localStorage');
+  assert.strictEqual(priv1.stats().replaceStateCalls, 0, 'Boot calls history.replaceState 0 times');
+
+  const twdInput = makeEl();
+  twdInput['data-path'] = 'cash.twd';
+  twdInput['data-kind'] = 'num';
+  priv1.doc.activeElement = twdInput;
+  for (const val of ['7', '75', '750', '7500', '75000', '750000']) {
+    twdInput.value = val;
+    priv1.docListeners.input({ target: twdInput });
+  }
+  assert.strictEqual(priv1.stats().lsWrites, 0, 'During rapid typing burst, debouncing prevents per-keystroke storage writes');
+  assert.strictEqual(priv1.stats().replaceStateCalls, 0, 'During rapid typing burst, debouncing prevents history.replaceState spam');
+
+  // User switches away from Safari to another app (iOS fires visibilitychange -> hidden; pagehide/beforeunload do NOT fire!)
+  priv1.doc.visibilityState = 'hidden';
+  priv1.docListeners.visibilitychange();
+  assert.strictEqual(priv1.stats().lsWrites, 1, 'Switching app flushes exactly 1 localStorage write');
+  assert.strictEqual(priv1.stats().replaceStateCalls, 1, 'Switching app flushes exactly 1 compact URL hash update');
+  assert.strictEqual(priv1.stats().winName, '', 'window.name stays empty (0 redundant heap duplication)');
+  const preservedTabHash = priv1.loc.hash;
+  assert(preservedTabHash.startsWith('#s='), 'Tab URL hash holds compact #s= state');
+
+  // Step B: iOS Jetsam kills background Private Browsing WebContent process -> ephemeral localStorage is completely wiped!
+  ephemeralLs = {}; // wiped!
+  // User switches back to Safari -> Safari reloads the preserved URL (including #s=...)
+  const priv2 = createSafariSim({ ls: ephemeralLs, hash: preservedTabHash });
+  assert(priv2.els.cashForm.innerHTML.includes('750,000'), 'After Private Browsing Jetsam kill & reload, 750,000 TWD is 100% restored from #s= without resetting to 300,000!');
+  assert.strictEqual(priv2.stats().lsWrites, 0, 'Reloading restored tab remains read-only on boot');
+
+  // 13.3 Transient storage read failure on lock-screen wake must NEVER overwrite real saved data in localStorage
+  const diskLs = { 'finTracker.state': JSON.stringify(Object.assign(core.defaultState(), { updatedAt: 999999, cash: Object.assign(core.defaultState().cash, { twd: 654321 }) })) };
+  createSafariSim({ ls: diskLs, hash: '', throwOnRead: true });
+  assert.strictEqual(JSON.parse(diskLs['finTracker.state']).cash.twd, 654321, 'Transient read error on boot must NEVER overwrite saved 654,321 with default 300,000');
+
+  // 13.4 Newer localStorage wins over a stale bookmarked #s=... URL hash in Normal Browsing
+  const oldState = core.defaultState();
+  oldState.updatedAt = 1000;
+  oldState.cash.twd = 111111;
+  const oldBookmarkHash = '#s=' + core.encodeStateHash(oldState);
+
+  const newerState = core.defaultState();
+  newerState.updatedAt = 2000;
+  newerState.cash.twd = 999999;
+  const normalLs = { 'finTracker.state': JSON.stringify(newerState) };
+  const normSim = createSafariSim({ ls: normalLs, hash: oldBookmarkHash });
+  assert(normSim.els.cashForm.innerHTML.includes('999,999'), 'Newer localStorage (999,999) wins over stale bookmarked #s= (111,111)');
+  assert.strictEqual(core.decodeStateHash(normSim.loc.hash).cash.twd, 999999, 'Stale URL hash is healed to match newer localStorage');
+
+  // 13.5 Security & DoS bounds checks (CSP, referrer, prototype pollution, MAX_LOAN_TERM, MAX_LIST_ROWS, MAX_STR_LEN)
+  assert(html.includes('http-equiv="Content-Security-Policy"') && html.includes("connect-src 'none'") && html.includes("default-src 'none'"), 'Strict CSP air-gap policy must exist');
+  assert(html.includes('name="referrer" content="no-referrer"'), 'no-referrer policy must exist');
+  assert(html.includes('data-act="copy-url"'), 'Clean share URL button must exist in #sec-data');
+
+  assert.strictEqual(core.isSafeKey('__proto__'), false);
+  assert.strictEqual(core.isSafeKey('constructor'), false);
+  assert.strictEqual(core.isSafeKey('prototype'), false);
+  const pollutedInput = JSON.parse('{"__proto__":{"polluted":true},"loans":[{"term":999999999,"name":"' + 'X'.repeat(500) + '"}]}');
+  const safeNorm = core.normalizeState(pollutedInput);
+  assert.strictEqual(({}).polluted, undefined, 'Prototype pollution must be blocked');
+  assert.strictEqual(safeNorm.loans[0].term, core.MAX_LOAN_TERM, 'Huge loan term clamped to MAX_LOAN_TERM (1200) to prevent OOM');
+  assert.strictEqual(safeNorm.loans[0].name.length, core.MAX_STR_LEN, 'Oversized string truncated to MAX_STR_LEN');
+  assert.strictEqual(core.amortSchedule(1000000, 3, 99999999).length, core.MAX_LOAN_TERM, 'amortSchedule clamps term to MAX_LOAN_TERM');
+
+  // 13.6 Transient IndexedDB recovery closes DB handle immediately (0 background locks) and never clobbers early user edits
+  const idbSaved = core.defaultState();
+  idbSaved.updatedAt = 5000;
+  idbSaved.cash.twd = 543210;
+  const idbBox = { val: JSON.stringify(idbSaved) };
+  const idbSim = createSafariSim({ ls: {}, hash: '', idbData: idbBox });
+  idbSim.flushIdb();
+  assert(idbSim.els.cashForm.innerHTML.includes('543,210'), 'IndexedDB restores 543,210 when localStorage and hash are cleared');
+  assert.strictEqual(idbSim.stats().idbClosedCount, idbSim.stats().idbOpenCount, 'Every IndexedDB connection is closed immediately on transaction complete (0 idle background handles)');
+
+  // Race guard: if user edits & flushes BEFORE slow IndexedDB callback arrives, IDB must NOT clobber user edit
+  const idbRaceSim = createSafariSim({ ls: {}, hash: '', idbData: idbBox });
+  const fastInput = makeEl();
+  fastInput['data-path'] = 'cash.twd';
+  fastInput['data-kind'] = 'num';
+  fastInput.value = '123000';
+  idbRaceSim.docListeners.input({ target: fastInput });
+  idbRaceSim.docListeners.focusout({ target: fastInput }); // commits save before IDB boot read completes
+  idbRaceSim.flushIdb();
+  assert(!idbRaceSim.els.cashForm.innerHTML.includes('543,210'), 'Delayed IndexedDB boot recovery must never overwrite live user edits');
+
+  // 13.7 Security FT-SEC-01 & FT-SEC-04: Extreme 1.6e308 / Infinity / -2400% inputs cannot freeze niceTicks/lineChart or produce NaN
+  const extremeInput = {
+    updatedAt: 9007199254740991, // future timestamp attack (FT-SEC-02)
+    cash: { twd: 1.6e308, usd: -1.6e308 },
+    tw: [{ symbol: 'EXT', name: 'Extreme', shares: 1e308, avg: 1e308, price: 1.7e308, lev: 999999, irr: 999999 }],
+    loans: [{ name: 'BadLoan', type: '信貸', principal: 1e308, rate: -2400, term: 120, paid: 0 }],
+    snapshots: [
+      { date: '2026-01-01', tw: 1.6e308, us: 0, cash: 0, debt: 0, netWorth: 1.6e308, totalAssets: 1.6e308 },
+      { date: '2026-02-01', tw: -1.6e308, us: 0, cash: 0, debt: 0, netWorth: -1.6e308, totalAssets: -1.6e308 }
+    ]
+  };
+  const clamped = core.normalizeState(extremeInput);
+  assert.strictEqual(clamped.updatedAt, 0, 'Future timestamp must be rejected and reset to 0');
+  assert(clamped.cash.twd <= core.MAX_ABS_VAL, 'Cash clamped to MAX_ABS_VAL');
+  assert(isFinite(core.loanPayment(1000000, 100000, 1200)), 'loanPayment never returns NaN/Infinity on huge rate');
+  assert(isFinite(core.loanPayment(1000000, -2400, 12)), 'loanPayment never divides by zero on even negative rate');
+  const extHash = '#s=' + core.encodeStateHash(clamped);
+  const extSim = createSafariSim({ ls: {}, hash: extHash });
+  assert(!extSim.els.projChart.innerHTML.includes('NaN') && !extSim.els.projChart.innerHTML.includes('Infinity'), 'SVG chart must never emit NaN/Infinity coordinates');
+
+  // 13.8 Security FT-SEC-02: Untrusted external #s=... link with newer timestamp must NOT silently overwrite existing local portfolio
+  const victimLocal = core.defaultState();
+  victimLocal.cid = 'LocalUsr';
+  victimLocal.updatedAt = 1000;
+  victimLocal.cash.twd = 666666;
+  const attackerState = core.defaultState();
+  attackerState.cid = 'Attacker';
+  attackerState.updatedAt = 5000;
+  attackerState.cash.twd = 1;
+  const attackerHash = '#s=' + core.encodeStateHash(attackerState);
+  const victimLs = { 'finTracker.state': JSON.stringify(victimLocal) };
+  const hijackSim = createSafariSim({ ls: victimLs, hash: attackerHash, confirmFn: () => false });
+  assert(hijackSim.els.cashForm.innerHTML.includes('666,666'), 'Declining untrusted external #s= preserves victim local 666,666');
+  assert.strictEqual(core.decodeStateHash(hijackSim.loc.hash).cash.twd, 666666, 'Malicious URL hash is healed back to victim local state');
+
+  // Same browser cid DOES seamlessly pick newer #s=
+  const sameCidNewer = core.defaultState();
+  sameCidNewer.cid = 'LocalUsr';
+  sameCidNewer.updatedAt = 5000;
+  sameCidNewer.cash.twd = 777777;
+  const sameCidSim = createSafariSim({ ls: victimLs, hash: '#s=' + core.encodeStateHash(sameCidNewer) });
+  assert(sameCidSim.els.cashForm.innerHTML.includes('777,777'), 'Same-browser cid allows newer #s= state (777,777)');
+
+  // 13.9 Reviewer #1 Finding #1 & #2: v7->v8 boot arms #s=, and hashDirty retries on visibilitychange after Safari replaceState rate-limit
+  const v7Ls = { 'finTracker.state': JSON.stringify(Object.assign(core.defaultState(), { cash: Object.assign(core.defaultState().cash, { twd: 333333 }) })) };
+  const v7UpgradeSim = createSafariSim({ ls: v7Ls, hash: '' });
+  assert(v7UpgradeSim.loc.hash.startsWith('#s='), 'v7->v8 upgrade with clean URL immediately arms #s= on boot');
+  assert.strictEqual(v7UpgradeSim.stats().lsWrites, 0, 'v7->v8 boot still writes 0 times to localStorage');
+
+  const rateLimitOpts = { ls: {}, hash: '', replaceStateThrow: true, confirmFn: () => true };
+  const rlSim = createSafariSim(rateLimitOpts);
+  const rlIn = makeEl();
+  rlIn['data-path'] = 'cash.twd';
+  rlIn['data-kind'] = 'num';
+  rlIn.value = '444444';
+  rlSim.docListeners.input({ target: rlIn });
+  rlSim.docListeners.focusout({ target: rlIn }); // replaceState throws SecurityError here!
+  assert.strictEqual(rlSim.loc.hash, '', 'Hash empty while WebKit rate limit blocks replaceState');
+  rateLimitOpts.replaceStateThrow = false; // rate limit window clears before user switches app
+  rlSim.doc.visibilityState = 'hidden';
+  rlSim.docListeners.visibilitychange();
+  assert.strictEqual(core.decodeStateHash(rlSim.loc.hash).cash.twd, 444444, 'visibilitychange retries hashDirty and saves 444,444 to #s=');
+
+  // 13.10 Security FT-SEC-03 & FT-SEC-06: Clear action resets projection (DCA & taxRate) + strips #s= from URL; strict UTF-8 rejects overlong/surrogates
+  const clearBtn = makeEl();
+  clearBtn['data-act'] = 'clear';
+  rlSim.docListeners.click({ target: { closest: (sel) => sel === '[data-act]' ? clearBtn : null } });
+  assert.strictEqual(rlSim.loc.hash, '', 'Clear action strips #s= personal state from URL bar');
+  const afterClear = JSON.parse(rateLimitOpts.ls['finTracker.state']);
+  assert.strictEqual(afterClear.projection.taxRate, core.DEFAULT_TAX_RATE, 'Clear resets taxRate to default 20%');
+  assert(afterClear.projection.dcaPlans.every(p => p.monthlyAmount === 0), 'Clear resets all DCA monthlyAmounts to 0');
+
+  assert.strictEqual(core.b64UrlToUtf8('wLw'), null, 'Overlong 2-byte UTF-8 sequence (0xC0 0xBC) must be rejected');
+  assert.strictEqual(core.b64UrlToUtf8('7aCA'), null, 'UTF-8 encoded lone surrogate (0xED 0xA0 0x80) must be rejected');
 });
 
 console.log('\nAll ' + passed + ' test suites passed!');

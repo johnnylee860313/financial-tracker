@@ -4,10 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none';">
 <title>財務追蹤器</title>
 <script>
 /* ==== [MODULE: THEME-BOOT] ==== */
 (function () {
+  if (window.top && window.self && window.top !== window.self) {
+    document.documentElement.style.display = 'none';
+  }
   var t = null;
   try { t = localStorage.getItem('finTracker.theme'); } catch (e) {}
   if (t !== 'light' && t !== 'dark') {
@@ -240,6 +245,7 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; padding:
     <h1>財務追蹤器</h1>
     <div class="actions">
       <button class="btn primary" data-act="snapshot">記錄快照</button>
+      <button class="btn" data-act="copy-url">分享乾淨網址</button>
       <button class="btn" data-act="theme" id="btnTheme">夜間模式</button>
     </div>
   </div>
@@ -403,10 +409,12 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; padding:
       <div class="row-actions" style="margin-top:0">
         <button class="btn small" data-act="export">匯出 JSON</button>
         <button class="btn small" data-act="import">匯入 JSON</button>
+        <button class="btn small" data-act="copy-url">複製乾淨分享網址</button>
         <button class="btn small danger" data-act="reset">重設為範例</button>
         <button class="btn small danger" data-act="clear">清空資料</button>
         <input type="file" id="importFile" accept=".json,application/json" hidden>
       </div>
+      <p class="muted small-text" style="margin:10px 0 0">輸入資料自動儲存在本機瀏覽器（localStorage / IndexedDB）與精簡網址錨點（#s= 不會隨 HTTP 請求傳送至網站伺服器，一般與私密瀏覽切換 App 返回皆可自動還原；若您開啟瀏覽器雲端歷史同步，網址錨點可能隨瀏覽器同步機制備份）。分享工具給他人時請點選「分享乾淨網址」或「複製乾淨分享網址」，勿直接複製上方網址列以免附帶個人資料。</p>
     </div>
   </section>
 </main>
@@ -416,11 +424,22 @@ footer.foot { color: var(--muted); font-size: 12px; text-align: center; padding:
 
 <script id="core">
 /* ==== [MODULE: CONFIG] ==== */
-const APP_VERSION = 'v7';
-const SCHEMA_VERSION = 4;
+const APP_VERSION = 'v8';
+const SCHEMA_VERSION = 5;
 const STORAGE_KEY = 'finTracker.state';
 const THEME_KEY = 'finTracker.theme';
 const LEGACY_V0_KEY = 'tracker_v2_data';
+const IDB_NAME = 'finTrackerDB';
+const IDB_STORE = 'kv';
+const HASH_PREFIX = '#s=';
+const MAX_LIST_ROWS = 200;
+const MAX_SNAPSHOTS = 1000;
+const MAX_STR_LEN = 120;
+const MAX_LOAN_TERM = 1200;
+const MAX_HASH_CHARS = 32768;
+const MAX_IMPORT_BYTES = 2097152;
+const MAX_ABS_VAL = 1e15;
+const MAX_RATE_PCT = 1000;
 const LOAN_TYPES = ['信貸', '房貸', '質押', '融資', '其他'];
 const MARGIN_TYPES = ['質押', '融資'];
 const DAY_MS = 86400000;
@@ -471,6 +490,12 @@ function num(x) {
   return 0;
 }
 function isObj(x) { return x !== null && typeof x === 'object' && !Array.isArray(x); }
+function isSafeKey(k) { return typeof k === 'string' && k !== '__proto__' && k !== 'constructor' && k !== 'prototype'; }
+function truncStr(s, maxLen) {
+  const str = (typeof s === 'string' || typeof s === 'number') ? String(s) : '';
+  const lim = maxLen || MAX_STR_LEN;
+  return str.length > lim ? str.slice(0, lim) : str;
+}
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
 function pad2(n) { return (n < 10 ? '0' : '') + n; }
 function parseDate(s) {
@@ -498,8 +523,9 @@ function projYearYm(today, y) {
 function fmtNum(n, d) {
   d = d == null ? 0 : d;
   n = num(n);
+  if (!isFinite(n)) return '0';
   const p = Math.pow(10, d);
-  let r = Math.round(n * p) / p;
+  let r = Math.abs(n) < MAX_ABS_VAL ? Math.round(n * p) / p : n;
   if (r === 0) r = 0;
   return r.toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
 }
@@ -568,6 +594,8 @@ function snapshotTemplate() { return { date: '', tw: 0, us: 0, cash: 0, debt: 0,
 function emptyState() {
   return {
     schemaVersion: SCHEMA_VERSION,
+    cid: '',
+    updatedAt: 0,
     fx: { usdTwd: 32 },
     cash: { twd: 0, usd: 0, unusedCredit: 0, monthlyIncome: 0, monthlyExpense: 0, investYears: 3, investYearsAsOf: todayStr() },
     tw: [], us: [], loans: [], cashflows: [], snapshots: [],
@@ -616,20 +644,23 @@ function defaultState() {
   s.projection.dcaPlans = PINNED_DCA_DEFAULTS.map(function (p) { return Object.assign({}, p); });
   return s;
 }
-function hasOwn(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
-/* Merge `over` into a fresh copy of `base`. Only keys present in base survive; primitive types follow base. */
+function hasOwn(o, k) { return o != null && Object.prototype.hasOwnProperty.call(o, k); }
+/* Merge `over` into a fresh copy of `base`. Only safe own keys present in base survive; primitive types follow base. */
 function deepMerge(base, over) {
-  if (Array.isArray(base)) return Array.isArray(over) ? over.slice() : base.slice();
+  if (Array.isArray(base)) return Array.isArray(over) ? over.slice(0, MAX_SNAPSHOTS) : base.slice();
   if (isObj(base)) {
     const o = isObj(over) ? over : {};
     const out = {};
-    Object.keys(base).forEach(function (k) { out[k] = hasOwn(o, k) ? deepMerge(base[k], o[k]) : base[k]; });
+    Object.keys(base).forEach(function (k) {
+      if (!isSafeKey(k)) return;
+      out[k] = hasOwn(o, k) ? deepMerge(base[k], o[k]) : base[k];
+    });
     return out;
   }
   if (over === undefined || over === null) return base;
   if (typeof base === 'number') return num(over);
   if (typeof base === 'boolean') return over === true || over === 'true' || over === 1;
-  if (typeof base === 'string') return (typeof over === 'string' || typeof over === 'number') ? String(over) : base;
+  if (typeof base === 'string') return (typeof over === 'string' || typeof over === 'number') ? truncStr(over, MAX_STR_LEN) : base;
   return over;
 }
 function normalizeState(raw) {
@@ -638,42 +669,105 @@ function normalizeState(raw) {
   if (raw.twStocks || raw.usStocks || raw.params) raw = migrateV0(raw);
   const isOldSchema = !raw.schemaVersion || num(raw.schemaVersion) < 3;
   const s = deepMerge(d, raw);
-  const rows = function (arr, tpl, fallback) {
-    return Array.isArray(arr) ? arr.filter(isObj).map(function (r) { return deepMerge(tpl(), r); }) : fallback;
+  const rawUpd = Math.max(0, Math.round(num(raw.updatedAt)));
+  s.updatedAt = rawUpd > Date.now() + DAY_MS ? 0 : rawUpd;
+  s.cid = /^[A-Za-z0-9_-]{6,16}$/.test(String(raw.cid || '')) ? String(raw.cid) : '';
+  s.fx.usdTwd = clamp(num(s.fx.usdTwd), 0, 1e5);
+  s.cash.twd = clamp(num(s.cash.twd), -MAX_ABS_VAL, MAX_ABS_VAL);
+  s.cash.usd = clamp(num(s.cash.usd), -MAX_ABS_VAL, MAX_ABS_VAL);
+  s.cash.unusedCredit = clamp(num(s.cash.unusedCredit), 0, MAX_ABS_VAL);
+  s.cash.monthlyIncome = clamp(num(s.cash.monthlyIncome), 0, MAX_ABS_VAL);
+  s.cash.monthlyExpense = clamp(num(s.cash.monthlyExpense), 0, MAX_ABS_VAL);
+  const rows = function (arr, tpl, fallback, maxRows) {
+    return Array.isArray(arr) ? arr.filter(isObj).slice(0, maxRows || MAX_LIST_ROWS).map(function (r) { return deepMerge(tpl(), r); }) : fallback;
   };
-  s.tw = rows(raw.tw, rawHoldingTemplate, d.tw);
-  s.us = rows(raw.us, rawHoldingTemplate, d.us);
-  s.loans = rows(raw.loans, loanTemplate, d.loans);
-  s.cashflows = rows(raw.cashflows, flowTemplate, d.cashflows);
-  s.snapshots = rows(raw.snapshots, snapshotTemplate, d.snapshots);
+  s.tw = rows(raw.tw, rawHoldingTemplate, d.tw, MAX_LIST_ROWS);
+  s.us = rows(raw.us, rawHoldingTemplate, d.us, MAX_LIST_ROWS);
+  s.loans = rows(raw.loans, loanTemplate, d.loans, MAX_LIST_ROWS);
+  s.cashflows = rows(raw.cashflows, flowTemplate, d.cashflows, MAX_SNAPSHOTS);
+  s.snapshots = rows(raw.snapshots, snapshotTemplate, d.snapshots, MAX_SNAPSHOTS);
+  const clampHold = function (h) {
+    h.shares = clamp(num(h.shares), 0, MAX_ABS_VAL);
+    h.avg = clamp(num(h.avg), 0, MAX_ABS_VAL);
+    h.price = clamp(num(h.price), 0, MAX_ABS_VAL);
+    h.lev = clamp(num(h.lev), 0, 100);
+    h.irr = clamp(num(h.irr), -99, MAX_RATE_PCT);
+  };
+  s.tw.forEach(clampHold);
+  s.us.forEach(clampHold);
   const hasRawInvestYears = isObj(raw.cash) && raw.cash.investYears !== undefined && raw.cash.investYears !== null && raw.cash.investYears !== '';
   if (!hasRawInvestYears && !(num(s.cash.investYears) > 0)) s.cash.investYears = 3;
+  else s.cash.investYears = clamp(num(s.cash.investYears), 0, 150);
   if (parseDate(s.cash.investYearsAsOf) == null) s.cash.investYearsAsOf = todayStr();
+  s.targets.leverage = clamp(num(s.targets.leverage), 0, 100);
+  s.targets.levBand = clamp(num(s.targets.levBand), 0, 100);
+  s.targets.allocTw = clamp(num(s.targets.allocTw), 0, 1000);
+  s.targets.allocUs = clamp(num(s.targets.allocUs), 0, 1000);
+  s.targets.allocCash = clamp(num(s.targets.allocCash), 0, 1000);
+  s.targets.allocTol = clamp(num(s.targets.allocTol), 0, 1000);
+  s.targets.maintWarn = clamp(num(s.targets.maintWarn), 0, 10000);
+  s.targets.maintCall = clamp(num(s.targets.maintCall), 0, 10000);
+  s.targets.dsrMax = clamp(num(s.targets.dsrMax), 0, 1000);
+  s.targets.debtRatioMax = clamp(num(s.targets.debtRatioMax), 0, 1000);
+  s.targets.reserveMonths = clamp(num(s.targets.reserveMonths), 0, 1200);
+  s.targets.reserveAmount = clamp(num(s.targets.reserveAmount), 0, MAX_ABS_VAL);
+  s.targets.inflation = clamp(num(s.targets.inflation), -50, MAX_RATE_PCT);
   const rawProj = isObj(raw.projection) ? raw.projection : {};
   s.projection.taxRate = snapTaxRate(rawProj.taxRate);
+  s.projection.years = clamp(Math.round(num(s.projection.years) || 30), 1, 100);
+  s.projection.monthly = clamp(num(s.projection.monthly), 0, MAX_ABS_VAL);
+  s.projection.cashRate = clamp(num(s.projection.cashRate), -99, MAX_RATE_PCT);
+  s.projection.fubonTwDiscount = clamp(num(s.projection.fubonTwDiscount), 0, 10);
+  s.projection.fubonTwMinFee = clamp(num(s.projection.fubonTwMinFee), 0, 1e6);
+  s.projection.fubonUsFeeRate = clamp(num(s.projection.fubonUsFeeRate), 0, 100);
+  s.projection.twPayoutFreq = clamp(Math.round(num(s.projection.twPayoutFreq)), 0, 365);
   if (Array.isArray(rawProj.dcaPlans)) {
-    const parsedPlans = rawProj.dcaPlans.filter(isObj).map(function (r) {
+    const parsedPlans = rawProj.dcaPlans.filter(isObj).slice(0, MAX_LIST_ROWS).map(function (r) {
       const mkt = r.market === 'US' ? 'US' : 'TW';
       return deepMerge(dcaTemplate(mkt), r);
     });
-    s.projection.dcaPlans = ensurePinnedDcaPlans(parsedPlans, isOldSchema);
+    s.projection.dcaPlans = ensurePinnedDcaPlans(parsedPlans, isOldSchema).slice(0, MAX_LIST_ROWS);
   } else if (rawProj.monthly !== undefined && num(rawProj.monthly) >= 0 && raw.schemaVersion === 1) {
     s.projection.dcaPlans = ensurePinnedDcaPlans([{
       market: 'TW', symbol: '0050', monthlyAmount: num(rawProj.monthly),
       officialIrr: REF_0050_IRR, dividendYield: REF_0050_YIELD, domesticDividendRatio: REF_0050_54C
     }], true);
   } else {
-    s.projection.dcaPlans = ensurePinnedDcaPlans(s.projection.dcaPlans, isOldSchema);
+    s.projection.dcaPlans = ensurePinnedDcaPlans(s.projection.dcaPlans, isOldSchema).slice(0, MAX_LIST_ROWS);
   }
-  s.projection.dcaPlans.forEach(function (p) { if (p.market !== 'US') p.market = 'TW'; });
+  s.projection.dcaPlans.forEach(function (p) {
+    if (p.market !== 'US') p.market = 'TW';
+    p.monthlyAmount = clamp(num(p.monthlyAmount), 0, MAX_ABS_VAL);
+    p.officialIrr = clamp(num(p.officialIrr), -99, MAX_RATE_PCT);
+    p.dividendYield = clamp(num(p.dividendYield), 0, MAX_RATE_PCT);
+    p.domesticDividendRatio = clamp(num(p.domesticDividendRatio), 0, 100);
+  });
   s.loans.forEach(function (l) {
     if (LOAN_TYPES.indexOf(l.type) < 0) l.type = '其他';
+    l.principal = clamp(num(l.principal), 0, MAX_ABS_VAL);
+    l.rate = clamp(num(l.rate), -99, MAX_RATE_PCT);
+    l.term = clamp(Math.round(num(l.term)), 0, MAX_LOAN_TERM);
+    l.paid = clamp(Math.round(num(l.paid)), 0, MAX_LOAN_TERM * 2);
     if (parseDate(l.paidAsOf) == null) l.paidAsOf = todayStr();
+    if (l.startDate && parseDate(l.startDate) == null) l.startDate = '';
   });
-  s.cashflows.forEach(function (c) { if (c.type !== 'out') c.type = 'in'; });
+  s.cashflows.forEach(function (c) {
+    if (c.type !== 'out') c.type = 'in';
+    c.amount = clamp(num(c.amount), 0, MAX_ABS_VAL);
+  });
   s.snapshots = s.snapshots
     .filter(function (x) { return parseDate(x.date) != null; })
-    .sort(function (a, b) { return parseDate(a.date) - parseDate(b.date); });
+    .map(function (sn) {
+      sn.tw = clamp(num(sn.tw), -MAX_ABS_VAL, MAX_ABS_VAL);
+      sn.us = clamp(num(sn.us), -MAX_ABS_VAL, MAX_ABS_VAL);
+      sn.cash = clamp(num(sn.cash), -MAX_ABS_VAL, MAX_ABS_VAL);
+      sn.debt = clamp(num(sn.debt), 0, MAX_ABS_VAL);
+      sn.netWorth = clamp(num(sn.netWorth), -MAX_ABS_VAL, MAX_ABS_VAL);
+      sn.totalAssets = clamp(num(sn.totalAssets), -MAX_ABS_VAL, MAX_ABS_VAL);
+      return sn;
+    })
+    .sort(function (a, b) { return parseDate(a.date) - parseDate(b.date); })
+    .slice(-MAX_SNAPSHOTS);
   s.schemaVersion = SCHEMA_VERSION;
   return s;
 }
@@ -681,7 +775,7 @@ function normalizeState(raw) {
 function migrateV0(v) {
   const p = isObj(v.params) ? v.params : {};
   const mapH = function (h) {
-    return { symbol: h.symbol, shares: h.shares, avg: h.avgPrice, price: h.curPrice, lev: h.lev || 1, pledged: !!h.pledged, irr: 0 };
+    return { symbol: truncStr(h.symbol), shares: h.shares, avg: h.avgPrice, price: h.curPrice, lev: h.lev || 1, pledged: !!h.pledged, irr: 0 };
   };
   const out = {
     fx: { usdTwd: p.usdCurRate },
@@ -689,51 +783,308 @@ function migrateV0(v) {
     targets: { leverage: p.targetLev, maintCall: p.marginCallLine, allocTw: p.targetTwPct, allocUs: p.targetUsPct, allocCash: p.targetCashPct },
     projection: { monthly: p.monthlyAdd }
   };
-  if (Array.isArray(v.twStocks)) out.tw = v.twStocks.filter(isObj).map(mapH);
-  if (Array.isArray(v.usStocks)) out.us = v.usStocks.filter(isObj).map(mapH);
+  if (Array.isArray(v.twStocks)) out.tw = v.twStocks.filter(isObj).slice(0, MAX_LIST_ROWS).map(mapH);
+  if (Array.isArray(v.usStocks)) out.us = v.usStocks.filter(isObj).slice(0, MAX_LIST_ROWS).map(mapH);
   if (Array.isArray(v.loans)) {
-    out.loans = v.loans.filter(isObj).map(function (l) {
+    out.loans = v.loans.filter(isObj).slice(0, MAX_LIST_ROWS).map(function (l) {
       const io = l.type === 'interest_only';
       const P = num(io ? (l.balance || l.initAmount) : l.initAmount);
-      const n = io ? 0 : Math.round(num(l.periods));
+      const n = io ? 0 : clamp(Math.round(num(l.periods)), 0, MAX_LOAN_TERM);
       let paid = 0;
       if (!io && n > 0 && l.balance != null) {
         const bal = num(l.balance);
         for (let k = 0; k <= n; k++) { if (loanBalance(P, l.rate, n, k) <= bal + 0.5) { paid = k; break; } }
       }
-      return { name: l.name, type: l.isMargin ? '質押' : (io ? '其他' : '信貸'), principal: P, rate: l.rate, term: n, paid: paid, startDate: '' };
+      return { name: truncStr(l.name), type: l.isMargin ? '質押' : (io ? '其他' : '信貸'), principal: P, rate: l.rate, term: n, paid: paid, startDate: '' };
     });
   }
   if (Array.isArray(v.cashflows)) {
-    out.cashflows = v.cashflows.filter(isObj).map(function (c) {
+    out.cashflows = v.cashflows.filter(isObj).slice(0, MAX_SNAPSHOTS).map(function (c) {
       const a = num(c.amount);
-      return { date: c.date, type: a < 0 ? 'out' : 'in', amount: Math.abs(a) };
+      return { date: truncStr(c.date, 16), type: a < 0 ? 'out' : 'in', amount: Math.abs(a) };
     });
   }
   return out;
 }
 
+/* ==== [MODULE: CODEC] ==== */
+/* Ultra-compact tuple + Base64URL codec for low-memory URL hash (#s=...) survival across iOS Safari background eviction & Private Browsing. */
+const B64U_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+const UTF8_ENC = typeof TextEncoder === 'function' ? new TextEncoder() : null;
+const UTF8_DEC = typeof TextDecoder === 'function' ? (function () { try { return new TextDecoder('utf-8', { fatal: true }); } catch (e) { return null; } })() : null;
+function utf8ToB64Url(str) {
+  str = String(str || '');
+  let bytes;
+  if (UTF8_ENC) {
+    bytes = UTF8_ENC.encode(str);
+  } else {
+    bytes = [];
+    for (let i = 0; i < str.length; i++) {
+      let c = str.charCodeAt(i);
+      if (c < 0x80) {
+        bytes.push(c);
+      } else if (c < 0x800) {
+        bytes.push(0xc0 | (c >> 6), 0x80 | (c & 0x3f));
+      } else if (c >= 0xd800 && c <= 0xdbff && i + 1 < str.length) {
+        const c2 = str.charCodeAt(i + 1);
+        if (c2 >= 0xdc00 && c2 <= 0xdfff) {
+          const cp = 0x10000 + ((c - 0xd800) << 10) + (c2 - 0xdc00);
+          bytes.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 0x3f), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+          i++;
+        } else {
+          bytes.push(0xef, 0xbf, 0xbd);
+        }
+      } else if (c >= 0xd800 && c <= 0xdfff) {
+        bytes.push(0xef, 0xbf, 0xbd);
+      } else {
+        bytes.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 0x3f), 0x80 | (c & 0x3f));
+      }
+    }
+  }
+  const chunks = [];
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i], b1 = i + 1 < bytes.length ? bytes[i + 1] : 0, b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+    let seg = B64U_CHARS[b0 >> 2] + B64U_CHARS[((b0 & 3) << 4) | (b1 >> 4)];
+    if (i + 1 < bytes.length) seg += B64U_CHARS[((b1 & 15) << 2) | (b2 >> 6)];
+    if (i + 2 < bytes.length) seg += B64U_CHARS[b2 & 63];
+    chunks.push(seg);
+  }
+  return chunks.join('');
+}
+function b64UrlVal(ch) {
+  if (ch >= 65 && ch <= 90) return ch - 65;
+  if (ch >= 97 && ch <= 122) return ch - 71;
+  if (ch >= 48 && ch <= 57) return ch + 4;
+  if (ch === 45 || ch === 43) return 62;
+  if (ch === 95 || ch === 47) return 63;
+  return -1;
+}
+function b64UrlToUtf8(b64) {
+  if (typeof b64 !== 'string' || !b64 || b64.length > MAX_HASH_CHARS) return null;
+  let end = b64.length;
+  while (end > 0 && b64.charCodeAt(end - 1) === 61) end--;
+  if (!end || (end & 3) === 1) return null;
+  const byteLen = Math.floor(end * 3 / 4);
+  const bytes = typeof Uint8Array === 'function' ? new Uint8Array(byteLen) : [];
+  let bi = 0;
+  for (let i = 0; i < end; i += 4) {
+    const v0 = b64UrlVal(b64.charCodeAt(i));
+    const v1 = b64UrlVal(b64.charCodeAt(i + 1));
+    const v2 = i + 2 < end ? b64UrlVal(b64.charCodeAt(i + 2)) : 0;
+    const v3 = i + 3 < end ? b64UrlVal(b64.charCodeAt(i + 3)) : 0;
+    if (v0 < 0 || v1 < 0 || v2 < 0 || v3 < 0) return null;
+    bytes[bi++] = (v0 << 2) | (v1 >> 4);
+    if (i + 2 < end) bytes[bi++] = ((v1 & 15) << 4) | (v2 >> 2);
+    if (i + 3 < end) bytes[bi++] = ((v2 & 3) << 6) | v3;
+  }
+  if (UTF8_DEC && bytes instanceof Uint8Array) {
+    try { return UTF8_DEC.decode(bytes); } catch (e) { return null; }
+  }
+  const chars = [];
+  for (let i = 0; i < bi;) {
+    const b0 = bytes[i++];
+    if (b0 < 0x80) {
+      chars.push(String.fromCharCode(b0));
+    } else if ((b0 & 0xe0) === 0xc0) {
+      if (i >= bi) return null;
+      const b1 = bytes[i++];
+      if ((b1 & 0xc0) !== 0x80) return null;
+      const cp = ((b0 & 0x1f) << 6) | (b1 & 0x3f);
+      if (cp < 0x80) return null; // reject overlong 2-byte UTF-8 (RFC 3629)
+      chars.push(String.fromCharCode(cp));
+    } else if ((b0 & 0xf0) === 0xe0) {
+      if (i + 1 >= bi) return null;
+      const b1 = bytes[i++], b2 = bytes[i++];
+      if ((b1 & 0xc0) !== 0x80 || (b2 & 0xc0) !== 0x80) return null;
+      const cp = ((b0 & 0x0f) << 12) | ((b1 & 0x3f) << 6) | (b2 & 0x3f);
+      if (cp < 0x800 || (cp >= 0xd800 && cp <= 0xdfff)) return null; // reject overlong 3-byte & lone surrogates
+      chars.push(String.fromCharCode(cp));
+    } else if ((b0 & 0xf8) === 0xf0) {
+      if (i + 2 >= bi) return null;
+      const b1 = bytes[i++], b2 = bytes[i++], b3 = bytes[i++];
+      if ((b1 & 0xc0) !== 0x80 || (b2 & 0xc0) !== 0x80 || (b3 & 0xc0) !== 0x80) return null;
+      const cp = (((b0 & 0x07) << 18) | ((b1 & 0x3f) << 12) | ((b2 & 0x3f) << 6) | (b3 & 0x3f)) - 0x10000;
+      if (cp < 0 || cp > 0xfffff) return null;
+      chars.push(String.fromCharCode(0xd800 + (cp >> 10), 0xdc00 + (cp & 0x3ff)));
+    } else {
+      return null;
+    }
+  }
+  return chars.join('');
+}
+function genCid() {
+  let out = '';
+  const arr = (typeof crypto !== 'undefined' && crypto && typeof crypto.getRandomValues === 'function' && typeof Uint8Array === 'function')
+    ? crypto.getRandomValues(new Uint8Array(8))
+    : null;
+  for (let i = 0; i < 8; i++) {
+    const r = arr ? (arr[i] & 63) : Math.floor(Math.random() * 64);
+    out += B64U_CHARS[r];
+  }
+  return out;
+}
+const CODEC_TGT_DEF = [1.5, 0.1, 50, 30, 20, 5, 160, 130, 35, 40, 6, 0, 2];
+const CODEC_PROJ_DEF = [0, 1, 0, 30, DEFAULT_TAX_RATE, 1, 1, 0.1, 2, 1, 1];
+function packDate(d) {
+  const s = truncStr(d, 16);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? +(s.slice(0, 4) + s.slice(5, 7) + s.slice(8, 10)) : s;
+}
+function unpackDate(v) {
+  if (typeof v === 'number' && isFinite(v) && v >= 10000101 && v <= 99991231) {
+    const s = String(Math.round(v));
+    return s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8);
+  }
+  return truncStr(v, 16);
+}
+function trimTail(arr, defs) {
+  let end = arr.length;
+  while (end > 0 && arr[end - 1] === defs[end - 1]) end--;
+  return arr.slice(0, end);
+}
+function withDefs(arr, defs) {
+  const a = Array.isArray(arr) ? arr : [];
+  return defs.map(function (d, i) { return i < a.length && a[i] !== undefined ? a[i] : d; });
+}
+function packState(s, maxSnaps, cid) {
+  const c = s.cash || {}, t = s.targets || {}, p = s.projection || {};
+  const snaps = Array.isArray(s.snapshots) ? (maxSnaps != null ? s.snapshots.slice(-maxSnaps) : s.snapshots) : [];
+  const packHold = function (h) {
+    return trimTail([truncStr(h.symbol, 32), truncStr(h.name), num(h.shares), num(h.avg), num(h.price), num(h.irr), num(h.lev), h.pledged ? 1 : 0], [null, null, 0, 0, 0, 0, 1, 0]);
+  };
+  const out = [
+    1,
+    Math.max(0, Math.round(num(s.updatedAt))),
+    num(s.fx && s.fx.usdTwd),
+    [num(c.twd), num(c.usd), num(c.unusedCredit), num(c.monthlyIncome), num(c.monthlyExpense), num(c.investYears), packDate(c.investYearsAsOf)],
+    trimTail([num(t.leverage), num(t.levBand), num(t.allocTw), num(t.allocUs), num(t.allocCash), num(t.allocTol), num(t.maintWarn), num(t.maintCall), num(t.dsrMax), num(t.debtRatioMax), num(t.reserveMonths), num(t.reserveAmount), num(t.inflation)], CODEC_TGT_DEF),
+    trimTail([num(p.monthly), num(p.cashRate), p.real ? 1 : 0, Math.round(num(p.years) || 30), snapTaxRate(p.taxRate), num(p.fubonTwDiscount), num(p.fubonTwMinFee), num(p.fubonUsFeeRate), Math.round(num(p.twPayoutFreq) || 2), p.applyNhi === false ? 0 : 1, p.apply54cCredit === false ? 0 : 1], CODEC_PROJ_DEF),
+    (p.dcaPlans || []).slice(0, MAX_LIST_ROWS).map(function (d) {
+      return trimTail([d.market === 'US' ? 1 : 0, truncStr(d.symbol, 32), d.pinned ? 1 : 0, num(d.monthlyAmount), num(d.officialIrr), num(d.dividendYield), num(d.domesticDividendRatio)], [null, null, null, 0, 0, 0, 0]);
+    }),
+    (s.tw || []).slice(0, MAX_LIST_ROWS).map(packHold),
+    (s.us || []).slice(0, MAX_LIST_ROWS).map(packHold),
+    (s.loans || []).slice(0, MAX_LIST_ROWS).map(function (l) {
+      const nm = truncStr(l.name), tp = truncStr(l.type, 16);
+      return trimTail([nm, tp === nm ? 0 : tp, num(l.principal), num(l.rate), clamp(Math.round(num(l.term)), 0, MAX_LOAN_TERM), Math.max(0, Math.round(num(l.paid))), packDate(l.paidAsOf), packDate(l.startDate)], [null, null, 0, 0, 0, 0, '', '']);
+    }),
+    (s.cashflows || []).slice(0, MAX_SNAPSHOTS).map(function (f) {
+      return [packDate(f.date), f.type === 'out' ? 1 : 0, num(f.amount)];
+    }),
+    snaps.map(function (sn) {
+      const tw = num(sn.tw), us = num(sn.us), cash = num(sn.cash), debt = num(sn.debt);
+      const ta = num(sn.totalAssets), nw = num(sn.netWorth);
+      return (ta === tw + us + cash && nw === ta - debt)
+        ? [packDate(sn.date), tw, us, cash, debt]
+        : [packDate(sn.date), tw, us, cash, debt, nw, ta];
+    })
+  ];
+  const tok = cid || (s && s.cid) || '';
+  if (tok) out.push(truncStr(tok, 16));
+  return out;
+}
+function unpackState(a) {
+  if (!Array.isArray(a) || a[0] !== 1 || a.length < 12) return null;
+  const c = Array.isArray(a[3]) ? a[3] : [];
+  const t = withDefs(a[4], CODEC_TGT_DEF);
+  const p = withDefs(a[5], CODEC_PROJ_DEF);
+  const dca = Array.isArray(a[6]) ? a[6] : [];
+  const mapHold = function (arr) {
+    return (Array.isArray(arr) ? arr : []).filter(Array.isArray).slice(0, MAX_LIST_ROWS).map(function (raw) {
+      const x = withDefs(raw, ['', '', 0, 0, 0, 0, 1, 0]);
+      return { symbol: truncStr(x[0], 32), name: truncStr(x[1]), shares: num(x[2]), avg: num(x[3]), price: num(x[4]), irr: num(x[5]), lev: num(x[6]), pledged: !!x[7] };
+    });
+  };
+  return normalizeState({
+    schemaVersion: SCHEMA_VERSION,
+    cid: typeof a[12] === 'string' ? truncStr(a[12], 16) : '',
+    updatedAt: Math.max(0, Math.round(num(a[1]))),
+    fx: { usdTwd: num(a[2]) },
+    cash: { twd: num(c[0]), usd: num(c[1]), unusedCredit: num(c[2]), monthlyIncome: num(c[3]), monthlyExpense: num(c[4]), investYears: num(c[5]), investYearsAsOf: unpackDate(c[6]) },
+    targets: { leverage: num(t[0]), levBand: num(t[1]), allocTw: num(t[2]), allocUs: num(t[3]), allocCash: num(t[4]), allocTol: num(t[5]), maintWarn: num(t[6]), maintCall: num(t[7]), dsrMax: num(t[8]), debtRatioMax: num(t[9]), reserveMonths: num(t[10]), reserveAmount: num(t[11]), inflation: num(t[12]) },
+    projection: {
+      monthly: num(p[0]), cashRate: num(p[1]), real: !!p[2], years: num(p[3]) || 30, taxRate: snapTaxRate(p[4]),
+      fubonTwDiscount: num(p[5]), fubonTwMinFee: num(p[6]), fubonUsFeeRate: num(p[7]), twPayoutFreq: num(p[8]) || 2,
+      applyNhi: p[9] !== 0, apply54cCredit: p[10] !== 0,
+      dcaPlans: dca.filter(Array.isArray).slice(0, MAX_LIST_ROWS).map(function (raw) {
+        const d = withDefs(raw, [0, '', 0, 0, 0, 0, 0]);
+        return { market: d[0] === 1 ? 'US' : 'TW', symbol: truncStr(d[1], 32), pinned: !!d[2], monthlyAmount: num(d[3]), officialIrr: num(d[4]), dividendYield: num(d[5]), domesticDividendRatio: num(d[6]) };
+      })
+    },
+    tw: mapHold(a[7]),
+    us: mapHold(a[8]),
+    loans: (Array.isArray(a[9]) ? a[9] : []).filter(Array.isArray).slice(0, MAX_LIST_ROWS).map(function (raw) {
+      const l = withDefs(raw, ['', '信貸', 0, 0, 0, 0, '', '']);
+      const nm = truncStr(l[0]);
+      const tp = l[1] === 0 ? nm : truncStr(l[1], 16);
+      return { name: nm, type: tp, principal: num(l[2]), rate: num(l[3]), term: num(l[4]), paid: num(l[5]), paidAsOf: unpackDate(l[6]), startDate: unpackDate(l[7]) };
+    }),
+    cashflows: (Array.isArray(a[10]) ? a[10] : []).filter(Array.isArray).slice(0, MAX_SNAPSHOTS).map(function (f) {
+      return { date: unpackDate(f[0]), type: f[1] === 1 ? 'out' : 'in', amount: num(f[2]) };
+    }),
+    snapshots: (Array.isArray(a[11]) ? a[11] : []).filter(Array.isArray).slice(0, MAX_SNAPSHOTS).map(function (sn) {
+      const tw = num(sn[1]), us = num(sn[2]), cash = num(sn[3]), debt = num(sn[4]);
+      const ta = sn.length > 6 ? num(sn[6]) : (tw + us + cash);
+      const nw = sn.length > 5 ? num(sn[5]) : (ta - debt);
+      return { date: unpackDate(sn[0]), tw: tw, us: us, cash: cash, debt: debt, netWorth: nw, totalAssets: ta };
+    })
+  });
+}
+function encodeStateHash(s, cid) {
+  if (!isObj(s)) return '';
+  let json = JSON.stringify(packState(s, null, cid));
+  if (json.length > 12288) json = JSON.stringify(packState(s, 60, cid));
+  let b64 = utf8ToB64Url(json);
+  if (b64.length > 16384) b64 = utf8ToB64Url(JSON.stringify(packState(s, 60, cid)));
+  if (b64.length > MAX_HASH_CHARS) b64 = utf8ToB64Url(JSON.stringify(packState(s, 0, cid)));
+  return b64.length <= MAX_HASH_CHARS ? b64 : '';
+}
+function decodeStateHashMeta(hashStr) {
+  if (typeof hashStr !== 'string' || !hashStr) return null;
+  let token = hashStr;
+  if (token.indexOf('#s=') === 0) token = token.slice(3);
+  else if (token.indexOf('s=') === 0) token = token.slice(2);
+  else if (token.charAt(0) === '#') return null;
+  if (!token || token.length > MAX_HASH_CHARS) return null;
+  try {
+    const json = b64UrlToUtf8(token);
+    if (!json) return null;
+    const arr = JSON.parse(json);
+    const st = unpackState(arr);
+    if (!st) return null;
+    const cid = (Array.isArray(arr) && typeof arr[12] === 'string') ? truncStr(arr[12], 16) : '';
+    return { state: st, cid: cid };
+  } catch (e) {
+    return null;
+  }
+}
+function decodeStateHash(hashStr) {
+  const m = decodeStateHashMeta(hashStr);
+  return m ? m.state : null;
+}
+
 /* ==== [MODULE: LOAN] ==== */
 /* Equal-payment (本息平均攤還) monthly payment. n <= 0 means interest-only. */
 function loanPayment(P, ratePct, n) {
-  P = num(P); n = Math.round(num(n));
-  const r = num(ratePct) / 100 / 12;
+  P = clamp(num(P), 0, MAX_ABS_VAL); n = clamp(Math.round(num(n)), 0, MAX_LOAN_TERM);
+  const r = clamp(num(ratePct), -99, MAX_RATE_PCT) / 100 / 12;
   if (P <= 0) return 0;
-  if (n <= 0) return P * r;
+  if (n <= 0) return Math.max(0, P * r);
   if (r === 0) return P / n;
   const f = Math.pow(1 + r, n);
-  return P * r * f / (f - 1);
+  if (!isFinite(f) || Math.abs(f - 1) < 1e-12) return r > 0 ? P * r : P / n;
+  return Math.max(0, P * r * f / (f - 1));
 }
 /* Remaining principal after k payments. */
 function loanBalance(P, ratePct, n, k) {
-  P = num(P); n = Math.round(num(n)); k = Math.max(0, Math.round(num(k)));
+  P = clamp(num(P), 0, MAX_ABS_VAL); n = clamp(Math.round(num(n)), 0, MAX_LOAN_TERM); k = Math.max(0, Math.round(num(k)));
   if (P <= 0) return 0;
   if (n <= 0) return P;
   if (k >= n) return 0;
-  const r = num(ratePct) / 100 / 12;
+  const r = clamp(num(ratePct), -99, MAX_RATE_PCT) / 100 / 12;
   if (r === 0) return P * (1 - k / n);
   const pm = loanPayment(P, ratePct, n);
   const f = Math.pow(1 + r, k);
+  if (!isFinite(f)) return 0;
   return Math.max(0, P * f - pm * (f - 1) / r);
 }
 function monthsElapsed(startStr, endStr) {
@@ -746,7 +1097,7 @@ function monthsElapsed(startStr, endStr) {
 }
 function loanPaidCount(loan, today) {
   today = today || todayStr();
-  const n = Math.round(num(loan.term));
+  const n = clamp(Math.round(num(loan.term)), 0, MAX_LOAN_TERM);
   let k;
   if (parseDate(loan.startDate) != null) {
     k = monthsElapsed(loan.startDate, today);
@@ -759,7 +1110,7 @@ function loanPaidCount(loan, today) {
   return n > 0 ? Math.min(k, n) : k;
 }
 function loanSummary(loan, today) {
-  const P = num(loan.principal), rate = num(loan.rate), n = Math.round(num(loan.term));
+  const P = num(loan.principal), rate = num(loan.rate), n = clamp(Math.round(num(loan.term)), 0, MAX_LOAN_TERM);
   const io = n <= 0;
   const k = loanPaidCount(loan, today);
   const bal = loanBalance(P, rate, n, k);
@@ -775,7 +1126,7 @@ function loanSummary(loan, today) {
   };
 }
 function amortSchedule(P, ratePct, n) {
-  P = num(P); n = Math.round(num(n));
+  P = num(P); n = clamp(Math.round(num(n)), 0, MAX_LOAN_TERM);
   const rows = [];
   if (P <= 0 || n <= 0) return rows;
   const r = num(ratePct) / 100 / 12;
@@ -1042,7 +1393,7 @@ function upsertSnapshot(list, snap) {
   const out = (list || []).filter(function (x) { return x.date !== snap.date; });
   out.push(snap);
   out.sort(function (a, b) { return parseDate(a.date) - parseDate(b.date); });
-  return out;
+  return out.slice(-MAX_SNAPSHOTS);
 }
 
 /* ==== [MODULE: PROJECTION] ==== */
@@ -1052,7 +1403,9 @@ function weightedIrr(s, m) {
   w += m.cash * num(s.projection.cashRate) / 100; tot += m.cash;
   return tot > 0 ? w / tot : 0;
 }
-function realRate(nominal, inflation) { return (1 + num(nominal)) / (1 + num(inflation)) - 1; }
+function realRate(nominal, inflation) {
+  return (1 + num(nominal)) / Math.max(1e-6, 1 + num(inflation)) - 1;
+}
 function dcaEffectiveIrr(plan) {
   const raw = num(plan && plan.officialIrr);
   if (raw > 0) return raw;
@@ -1081,7 +1434,7 @@ function calcFubonDcaFee(plan, fx, projCfg) {
 /* Compute annual TW dividend, 54C domestic dividend, income tax by bracket (5/12/20/30/40%), 2nd-gen NHI (2.11% if single payout >= 20,000), and 54C 8.5% tax credit (cap 80,000) */
 function calcTwDividendTaxAndNhi(twBuckets, projCfg, realScale) {
   const cfg = isObj(projCfg) ? projCfg : {};
-  const freq = Math.max(1, Math.round(num(cfg.twPayoutFreq) || 2));
+  const freq = clamp(Math.round(num(cfg.twPayoutFreq) || 2), 1, 365);
   const scale = (realScale != null && realScale > 0) ? realScale : 1;
   const taxRatePct = cfg.taxRate !== undefined && cfg.taxRate !== null && cfg.taxRate !== '' ? Math.max(0, num(cfg.taxRate)) : DEFAULT_TAX_RATE;
   let annualDiv = 0, annual54c = 0;
@@ -1118,8 +1471,8 @@ function calcTwDividendTaxAndNhi(twBuckets, projCfg, realScale) {
 }
 /* opts: {assets, loans, today, rate (decimal), inflation (decimal), real, monthly, years, fx, twMV, usMV, cash, twHoldings, usHoldings, projection} */
 function project(opts) {
-  const years = Math.max(1, Math.round(num(opts.years) || 30));
-  const infl = num(opts.inflation);
+  const years = clamp(Math.round(num(opts.years) || 30), 1, 100);
+  const infl = Math.max(-0.99, num(opts.inflation));
   const real = !!opts.real;
   const effRate = function (nom) {
     const r = real ? realRate(nom, infl) : num(nom);
@@ -1127,7 +1480,7 @@ function project(opts) {
   };
   const mRate = function (nom) { return Math.pow(1 + effRate(nom), 1 / 12) - 1; };
   const loans = (opts.loans || []).map(function (l) {
-    return { P: num(l.principal), rate: num(l.rate), n: Math.round(num(l.term)), k0: loanPaidCount(l, opts.today || todayStr()) };
+    return { P: num(l.principal), rate: num(l.rate), n: clamp(Math.round(num(l.term)), 0, MAX_LOAN_TERM), k0: loanPaidCount(l, opts.today || todayStr()) };
   });
 
   const projCfg = isObj(opts.projection) ? opts.projection : {};
@@ -1382,6 +1735,7 @@ function buildAdvice(m, t) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     APP_VERSION: APP_VERSION, SCHEMA_VERSION: SCHEMA_VERSION, STORAGE_KEY: STORAGE_KEY,
+    MAX_LIST_ROWS: MAX_LIST_ROWS, MAX_SNAPSHOTS: MAX_SNAPSHOTS, MAX_STR_LEN: MAX_STR_LEN, MAX_LOAN_TERM: MAX_LOAN_TERM, MAX_HASH_CHARS: MAX_HASH_CHARS, MAX_ABS_VAL: MAX_ABS_VAL, MAX_RATE_PCT: MAX_RATE_PCT,
     REF_0050_IRR: REF_0050_IRR, REF_0050_YIELD: REF_0050_YIELD, REF_0050_54C: REF_0050_54C,
     REF_VOO_IRR: REF_VOO_IRR, REF_VOO_YIELD: REF_VOO_YIELD,
     REF_QQQ_IRR: REF_QQQ_IRR, REF_QQQ_YIELD: REF_QQQ_YIELD,
@@ -1390,10 +1744,11 @@ if (typeof module !== 'undefined' && module.exports) {
     TW_TAX_BRACKETS: TW_TAX_BRACKETS, DEFAULT_TAX_RATE: DEFAULT_TAX_RATE, snapTaxRate: snapTaxRate,
     FUBON_TW_BASE_RATE: FUBON_TW_BASE_RATE, NHI_SUPP_RATE: NHI_SUPP_RATE, NHI_THRESHOLD: NHI_THRESHOLD,
     TAX_54C_CREDIT_RATE: TAX_54C_CREDIT_RATE, TAX_54C_CREDIT_CAP: TAX_54C_CREDIT_CAP,
-    num: num, parseDate: parseDate, toDateStr: toDateStr, todayStr: todayStr, projYearYm: projYearYm, fmtNum: fmtNum, fmtPct: fmtPct, fmtCompact: fmtCompact,
+    num: num, isSafeKey: isSafeKey, truncStr: truncStr, parseDate: parseDate, toDateStr: toDateStr, todayStr: todayStr, projYearYm: projYearYm, fmtNum: fmtNum, fmtPct: fmtPct, fmtCompact: fmtCompact,
     defaultState: defaultState, emptyState: emptyState, holdingTemplate: holdingTemplate, dcaTemplate: dcaTemplate,
     ensurePinnedDcaPlans: ensurePinnedDcaPlans,
     deepMerge: deepMerge, normalizeState: normalizeState, migrateV0: migrateV0,
+    utf8ToB64Url: utf8ToB64Url, b64UrlToUtf8: b64UrlToUtf8, genCid: genCid, packState: packState, unpackState: unpackState, encodeStateHash: encodeStateHash, decodeStateHash: decodeStateHash, decodeStateHashMeta: decodeStateHashMeta,
     loanPayment: loanPayment, loanBalance: loanBalance, loanSummary: loanSummary, loanPaidCount: loanPaidCount,
     amortSchedule: amortSchedule, monthsElapsed: monthsElapsed,
     xirr: xirr, modifiedDietz: modifiedDietz, cagrFromCashflows: cagrFromCashflows, avgAnnualFromSnapshots: avgAnnualFromSnapshots,
@@ -1414,14 +1769,49 @@ function esc(s) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
   });
 }
-function getPath(obj, path) {
-  return path.split('.').reduce(function (o, k) { return o == null ? undefined : o[k]; }, obj);
+function isValidArrIdx(arr, k) {
+  const idx = Number(k);
+  return Number.isInteger(idx) && idx >= 0 && idx < arr.length && String(idx) === k;
 }
-function setPath(obj, path, val) {
+function getPath(obj, path) {
+  if (typeof path !== 'string' || !path) return undefined;
   const ks = path.split('.');
   let o = obj;
-  for (let i = 0; i < ks.length - 1; i++) { o = o[ks[i]]; if (o == null) return; }
-  o[ks[ks.length - 1]] = val;
+  for (let i = 0; i < ks.length; i++) {
+    const k = ks[i];
+    if (o == null || !isSafeKey(k)) return undefined;
+    if (Array.isArray(o)) {
+      if (!isValidArrIdx(o, k)) return undefined;
+    } else if (!hasOwn(o, k)) {
+      return undefined;
+    }
+    o = o[k];
+  }
+  return o;
+}
+function setPath(obj, path, val) {
+  if (typeof path !== 'string' || !path) return false;
+  const ks = path.split('.');
+  let o = obj;
+  for (let i = 0; i < ks.length - 1; i++) {
+    const k = ks[i];
+    if (o == null || !isSafeKey(k)) return false;
+    if (Array.isArray(o)) {
+      if (!isValidArrIdx(o, k)) return false;
+    } else if (!hasOwn(o, k)) {
+      return false;
+    }
+    o = o[k];
+  }
+  const last = ks[ks.length - 1];
+  if (o == null || !isSafeKey(last)) return false;
+  if (Array.isArray(o)) {
+    if (!isValidArrIdx(o, last)) return false;
+  } else if (!hasOwn(o, last)) {
+    return false;
+  }
+  o[last] = val;
+  return true;
 }
 function fmtInput(v) {
   v = num(v);
@@ -1435,52 +1825,294 @@ function debounce(fn, ms) {
 let toastTimer = null;
 function toast(msg) {
   const el = $('#toast');
+  if (!el) return;
   el.textContent = msg; el.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(function () { el.hidden = true; }, 1800);
+  toastTimer = setTimeout(function () { el.hidden = true; toastTimer = null; }, 1800);
 }
 const STATUS_LABEL = { ok: '良好', warn: '注意', bad: '危險', na: '' };
 
 /* ==== [MODULE: STORAGE] ==== */
+/* Low-memory multi-tier persistence:
+   1. localStorage (primary disk sync store in normal mode)
+   2. Compact URL hash #s=... via history.replaceState(null, '', ...) (~0.5-1 KB, survives iOS Safari background Jetsam reload in BOTH Private Browsing & Normal Browsing without server traffic or duplicate history.state clone)
+   3. Transient-connection IndexedDB (secondary disk store against Safari ITP; closes DB handle immediately on tx complete to hold 0 background locks / 0 idle RAM)
+   4. Compact window.name fallback ONLY when both localStorage and history.replaceState are blocked (e.g. restricted file:// WebView) */
 const WIN_NAME_PREFIX = STORAGE_KEY + ':';
+const WIN_HASH_PREFIX = STORAGE_KEY + '#';
+let lsStatus = 0; // 0: untested, 1: writable, -1: blocked/silent-drop
+let idbDisabled = false;
+let idbWriting = false;
+let idbPendingPayload = null;
+let persistRequested = false;
+let legacyCleaned = false;
+let lastWrittenHash = '';
+let storageChangedFlag = false;
+
+function parseJsonState(raw) {
+  if (typeof raw !== 'string' || !raw || raw.length > MAX_IMPORT_BYTES) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return isObj(parsed) ? normalizeState(parsed) : null;
+  } catch (e) {
+    return null;
+  }
+}
+function isBlankPortfolio(s) {
+  return !!(s && !s.tw.length && !s.us.length && !s.loans.length && !s.snapshots.length && !num(s.cash && s.cash.twd) && !num(s.cash && s.cash.usd));
+}
 const Store = {
-  readRaw: function () {
+  readHashCandidate: function () {
+    try {
+      const h = (typeof window !== 'undefined' && window.location && typeof window.location.hash === 'string') ? window.location.hash : '';
+      const meta = decodeStateHashMeta(h);
+      return meta ? { state: meta.state, cid: meta.cid, rawHash: h, source: 'hash' } : null;
+    } catch (e) {
+      return null;
+    }
+  },
+  readStorageCandidate: function () {
     try {
       const ls = localStorage.getItem(STORAGE_KEY);
-      if (ls) return ls;
+      const st = parseJsonState(ls);
+      if (st) return { state: st, source: 'ls' };
     } catch (e) {}
     try {
       if (typeof sessionStorage !== 'undefined') {
         const ss = sessionStorage.getItem(STORAGE_KEY);
-        if (ss) return ss;
+        const st = parseJsonState(ss);
+        if (st) return { state: st, source: 'ss' };
       }
     } catch (e) {}
     try {
-      if (typeof window !== 'undefined' && typeof window.name === 'string' && window.name.indexOf(WIN_NAME_PREFIX) === 0) {
-        return window.name.slice(WIN_NAME_PREFIX.length);
+      if (typeof window !== 'undefined' && typeof window.name === 'string') {
+        if (window.name.indexOf(WIN_HASH_PREFIX) === 0) {
+          const st = decodeStateHash(window.name.slice(WIN_HASH_PREFIX.length));
+          if (st) return { state: st, source: 'wn' };
+        } else if (window.name.indexOf(WIN_NAME_PREFIX) === 0) {
+          const st = parseJsonState(window.name.slice(WIN_NAME_PREFIX.length));
+          if (st) return { state: st, source: 'wn' };
+        }
       }
     } catch (e) {}
     try {
       const legacy = localStorage.getItem(LEGACY_V0_KEY);
-      if (legacy) return legacy;
+      const st = parseJsonState(legacy);
+      if (st) return { state: st, source: 'v0' };
     } catch (e) {}
     return null;
   },
-  load: function () {
-    const raw = Store.readRaw();
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw);
-        if (isObj(parsed)) return normalizeState(parsed);
-      } catch (e) {}
+  pickBest: function (hashCand, storCand) {
+    if (!hashCand) return storCand;
+    if (!storCand) return hashCand;
+    const uHash = num(hashCand.state.updatedAt);
+    const uStor = num(storCand.state.updatedAt);
+    if (uHash <= uStor) return storCand;
+    const sameCid = !!(storCand.state.cid && hashCand.cid && hashCand.cid === storCand.state.cid);
+    if (sameCid) return hashCand;
+    if (typeof confirm === 'function' && confirm('偵測到網址包含外部財務資料，是否載入並取代目前儲存在本機的資料？（按「取消」將保留您原有的本機資料）')) {
+      hashCand.state.cid = genCid();
+      return hashCand;
     }
-    return defaultState();
+    return storCand;
+  },
+  writeHash: function (s) {
+    try {
+      if (typeof window === 'undefined' || typeof history === 'undefined' || !history || typeof history.replaceState !== 'function') return false;
+      const packed = encodeStateHash(s);
+      if (!packed) return false;
+      const nextHash = HASH_PREFIX + packed;
+      if (!window.location || window.location.hash !== nextHash) {
+        history.replaceState(null, '', nextHash);
+      }
+      lastWrittenHash = nextHash;
+      return true;
+    } catch (e) {
+      return false;
+    }
+  },
+  clearHash: function () {
+    lastWrittenHash = '';
+    try {
+      if (typeof window === 'undefined' || typeof history === 'undefined' || !history || typeof history.replaceState !== 'function') return false;
+      const loc = window.location;
+      if (!loc || !loc.hash || loc.hash.indexOf('#s=') !== 0) return true;
+      const clean = (loc.pathname || loc.href.split('#')[0]) + (loc.search || '');
+      history.replaceState(null, '', clean || '#');
+      return true;
+    } catch (e) {
+      return false;
+    }
+  },
+  peekExternalChange: function (curUpdatedAt) {
+    try {
+      if (typeof window !== 'undefined' && window.location && typeof window.location.hash === 'string') {
+        const h = window.location.hash;
+        if (h.indexOf('#s=') === 0 && h !== lastWrittenHash) return true;
+      }
+    } catch (e) {}
+    if (storageChangedFlag) {
+      storageChangedFlag = false;
+      return true;
+    }
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return false;
+      const m = /"updatedAt"\s*:\s*(\d+)/.exec(raw);
+      return !!(m && Number(m[1]) > num(curUpdatedAt));
+    } catch (e) {
+      return false;
+    }
+  },
+  loadSync: function () {
+    const hashCand = Store.readHashCandidate();
+    const storCand = Store.readStorageCandidate();
+    const best = Store.pickBest(hashCand, storCand);
+    if (best) {
+      if (best.source !== 'hash') {
+        if (hashCand || !isBlankPortfolio(best.state)) Store.writeHash(best.state);
+      } else if (hashCand && hashCand.rawHash) {
+        lastWrittenHash = hashCand.rawHash;
+      }
+      return { state: best.state, hasStored: true, source: best.source };
+    }
+    return { state: defaultState(), hasStored: false, source: 'default' };
+  },
+  load: function () {
+    return Store.loadSync().state;
+  },
+  idbOp: function (mode, payload, cb, onDone) {
+    if (idbDisabled || typeof indexedDB === 'undefined' || !indexedDB) { if (onDone) onDone(); return; }
+    let req;
+    try { req = indexedDB.open(IDB_NAME, 1); } catch (e) { idbDisabled = true; if (onDone) onDone(); return; }
+    let abortedUpgrade = false;
+    req.onupgradeneeded = function () {
+      try {
+        const db = req.result;
+        if (mode === 'readonly' && !db.objectStoreNames.contains(IDB_STORE)) {
+          abortedUpgrade = true;
+          if (req.transaction && req.transaction.abort) req.transaction.abort();
+          try { db.close(); } catch (e2) {}
+          return;
+        }
+        if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+      } catch (e) {}
+    };
+    req.onerror = function () {
+      if (!abortedUpgrade && req.error && (req.error.name === 'SecurityError' || req.error.name === 'InvalidStateError')) idbDisabled = true;
+      if (onDone) onDone();
+    };
+    req.onblocked = function () { if (onDone) onDone(); };
+    req.onsuccess = function () {
+      const db = req.result;
+      db.onversionchange = function () { try { db.close(); } catch (e) {} };
+      if (abortedUpgrade || (mode === 'readonly' && !db.objectStoreNames.contains(IDB_STORE))) {
+        try { db.close(); } catch (e) {}
+        if (onDone) onDone();
+        return;
+      }
+      try {
+        const tx = db.transaction(IDB_STORE, mode);
+        const store = tx.objectStore(IDB_STORE);
+        const opReq = mode === 'readwrite' ? store.put(payload, STORAGE_KEY) : store.get(STORAGE_KEY);
+        tx.oncomplete = function () {
+          try { db.close(); } catch (e) {}
+          if (cb && opReq) cb(opReq.result);
+          if (onDone) onDone();
+        };
+        tx.onerror = tx.onabort = function () {
+          try { db.close(); } catch (e) {}
+          if (onDone) onDone();
+        };
+      } catch (e) {
+        try { db.close(); } catch (e2) {}
+        if (onDone) onDone();
+      }
+    };
+  },
+  writeIdb: function (json) {
+    if (idbDisabled || typeof indexedDB === 'undefined' || !indexedDB) return;
+    if (idbWriting) { idbPendingPayload = json; return; }
+    idbWriting = true;
+    Store.idbOp('readwrite', json, null, function () {
+      idbWriting = false;
+      if (idbPendingPayload !== null) {
+        const next = idbPendingPayload;
+        idbPendingPayload = null;
+        Store.writeIdb(next);
+      }
+    });
+  },
+  recoverFromIdb: function (onRecovered) {
+    Store.idbOp('readonly', null, function (raw) {
+      const st = parseJsonState(raw);
+      if (st && onRecovered) onRecovered(st);
+    });
   },
   save: function (s) {
-    const json = JSON.stringify(s);
-    try { localStorage.setItem(STORAGE_KEY, json); } catch (e) {}
-    try { if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(STORAGE_KEY, json); } catch (e) {}
-    try { if (typeof window !== 'undefined') window.name = WIN_NAME_PREFIX + json; } catch (e) {}
+    if (!isObj(s)) return { lsOk: false, hashOk: false };
+    if (!persistRequested && typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.persist === 'function') {
+      persistRequested = true;
+      try { navigator.storage.persist().catch(function () {}); } catch (e) {}
+    }
+    let json = null;
+    let lsOk = false;
+    if (lsStatus >= 0) {
+      json = JSON.stringify(s);
+      try {
+        localStorage.setItem(STORAGE_KEY, json);
+        if (lsStatus === 0) lsStatus = localStorage.getItem(STORAGE_KEY) === json ? 1 : -1;
+        lsOk = lsStatus === 1;
+      } catch (e) {
+        lsOk = false;
+      }
+    }
+    const hashOk = Store.writeHash(s);
+    if (lsOk || hashOk) {
+      if (!legacyCleaned) {
+        legacyCleaned = true;
+        try {
+          if (typeof window !== 'undefined' && typeof window.name === 'string' &&
+              (window.name.indexOf(WIN_NAME_PREFIX) === 0 || window.name.indexOf(WIN_HASH_PREFIX) === 0)) {
+            window.name = '';
+          }
+          if (lsOk && typeof sessionStorage !== 'undefined') sessionStorage.removeItem(STORAGE_KEY);
+        } catch (e) {}
+      }
+    } else if (typeof window !== 'undefined') {
+      const packed = encodeStateHash(s);
+      if (packed) {
+        try { window.name = WIN_HASH_PREFIX + packed; } catch (e) {}
+      }
+    }
+    if (!idbDisabled && typeof indexedDB !== 'undefined' && indexedDB) {
+      if (json === null) json = JSON.stringify(s);
+      Store.writeIdb(json);
+    }
+    return { lsOk: lsOk, hashOk: hashOk };
+  },
+  clearAll: function (emptyS) {
+    try { localStorage.removeItem(LEGACY_V0_KEY); } catch (e) {}
+    try { if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(STORAGE_KEY); } catch (e) {}
+    try { if (typeof window !== 'undefined') window.name = ''; } catch (e) {}
+    let lsOk = false;
+    const json = JSON.stringify(emptyS);
+    if (lsStatus >= 0) {
+      try {
+        localStorage.setItem(STORAGE_KEY, json);
+        if (lsStatus === 0) lsStatus = localStorage.getItem(STORAGE_KEY) === json ? 1 : -1;
+        lsOk = lsStatus === 1;
+      } catch (e) { lsOk = false; }
+    }
+    if (lsOk) {
+      Store.clearHash();
+    } else {
+      if (!Store.writeHash(emptyS) && typeof window !== 'undefined') {
+        const packed = encodeStateHash(emptyS);
+        if (packed) { try { window.name = WIN_HASH_PREFIX + packed; } catch (e) {} }
+      }
+    }
+    Store.writeIdb(json);
   }
 };
 
@@ -1515,8 +2147,9 @@ const Theme = {
 let S = null;
 let M = null;
 let P = null;
-const chartHidden = { proj: {}, hist: {} };
-const collapsedPanels = {};
+let snapsDirty = true;
+const chartHidden = { proj: Object.create(null), hist: Object.create(null) };
+const collapsedPanels = Object.create(null);
 
 /* ==== [MODULE: RENDER-INPUTS] ==== */
 function inNum(path, val, cls, label, ph) {
@@ -1735,14 +2368,20 @@ function retSpan(x) {
   const r = Math.round(x * 10000);
   return '<span class="' + (r > 0 ? 'up' : r < 0 ? 'down' : '') + '">' + fmtSignedPct(x) + '</span>';
 }
+function setHtmlNode(el, html) {
+  if (!el || el._lastHtml === html) return;
+  el._lastHtml = html;
+  el.innerHTML = html;
+}
 function setMetric(id, value, sub, status) {
+  const st = hasOwn(STATUS_LABEL, status) ? status : 'na';
   const card = $('#m-' + id);
-  card.setAttribute('data-status', status || 'na');
-  $('#m-' + id + '-val').innerHTML = value;
-  $('#m-' + id + '-sub').innerHTML = sub || '';
+  card.setAttribute('data-status', st);
+  setHtmlNode($('#m-' + id + '-val'), value);
+  setHtmlNode($('#m-' + id + '-sub'), sub || '');
   const b = $('#m-' + id + '-badge');
-  b.className = 'badge s-' + (status || 'na');
-  b.textContent = STATUS_LABEL[status || 'na'] || '';
+  b.className = 'badge s-' + st;
+  b.textContent = STATUS_LABEL[st] || '';
 }
 function renderMetrics() {
   const t = S.targets, st = M.status;
@@ -1770,42 +2409,48 @@ function renderMetrics() {
 }
 
 /* ==== [MODULE: RENDER-OUTPUTS] ==== */
-function setText(id, html) { const el = document.getElementById(id); if (el) el.innerHTML = html; }
+function setPlainText(id, txt) {
+  const el = document.getElementById(id);
+  if (el && el.textContent !== txt) el.textContent = txt;
+}
+function setHtml(id, html) {
+  setHtmlNode(document.getElementById(id), html);
+}
 function renderRowOutputs() {
   ['tw', 'us'].forEach(function (kind) {
     M[kind].forEach(function (h, i) {
-      setText(kind + '-' + i + '-mv', fmtNum(h.mv));
-      setText(kind + '-' + i + '-cost', fmtNum(h.cost));
-      setText(kind + '-' + i + '-pl', fmtSigned(h.pl));
-      setText(kind + '-' + i + '-ret', retSpan(h.ret));
+      setPlainText(kind + '-' + i + '-mv', fmtNum(h.mv));
+      setPlainText(kind + '-' + i + '-cost', fmtNum(h.cost));
+      setPlainText(kind + '-' + i + '-pl', fmtSigned(h.pl));
+      setHtml(kind + '-' + i + '-ret', retSpan(h.ret));
     });
     const mv = kind === 'tw' ? M.twMV : M.usMV, cost = kind === 'tw' ? M.twCost : M.usCost;
-    setText(kind + '-t-mv', fmtNum(mv));
-    setText(kind + '-t-cost', fmtNum(cost));
-    setText(kind + '-t-pl', fmtSigned(mv - cost));
-    setText(kind + '-t-ret', retSpan(kind === 'tw' ? M.twRet : M.usRet));
+    setPlainText(kind + '-t-mv', fmtNum(mv));
+    setPlainText(kind + '-t-cost', fmtNum(cost));
+    setPlainText(kind + '-t-pl', fmtSigned(mv - cost));
+    setHtml(kind + '-t-ret', retSpan(kind === 'tw' ? M.twRet : M.usRet));
   });
   M.loans.forEach(function (l, i) {
-    setText('loan-' + i + '-payL', l.interestOnly ? '每月利息' : '每月還款');
-    setText('loan-' + i + '-pay', fmtNum(l.payment));
-    setText('loan-' + i + '-bal', fmtNum(l.balance));
-    setText('loan-' + i + '-rem', l.interestOnly ? '只付息' : l.paid + ' / ' + l.remainingTerms);
-    setText('loan-' + i + '-int', l.interestOnly ? '不適用' : fmtNum(l.totalInterest));
+    setPlainText('loan-' + i + '-payL', l.interestOnly ? '每月利息' : '每月還款');
+    setPlainText('loan-' + i + '-pay', fmtNum(l.payment));
+    setPlainText('loan-' + i + '-bal', fmtNum(l.balance));
+    setPlainText('loan-' + i + '-rem', l.interestOnly ? '只付息' : l.paid + ' / ' + l.remainingTerms);
+    setPlainText('loan-' + i + '-int', l.interestOnly ? '不適用' : fmtNum(l.totalInterest));
   });
   const fx = num(S.fx.usdTwd);
   (S.projection.dcaPlans || []).forEach(function (r, i) {
     const f = calcFubonDcaFee(r, fx, S.projection);
     const us = r.market === 'US';
-    setText('dca-' + i + '-fee', fmtNum(f.feeTwd, us ? 1 : 0));
-    setText('dca-' + i + '-net', fmtNum(f.netTwd, 0));
+    setPlainText('dca-' + i + '-fee', fmtNum(f.feeTwd, us ? 1 : 0));
+    setPlainText('dca-' + i + '-net', fmtNum(f.netTwd, 0));
     const irrIn = document.querySelector('[data-path="projection.dcaPlans.' + i + '.officialIrr"]');
     if (irrIn && irrIn.classList && irrIn.classList.toggle) {
       irrIn.classList.toggle('is-ref', !(num(r.officialIrr) > 0));
     }
   });
-  setText('dca-t-gross', fmtNum(P ? P.dcaMonthlyGrossTwd : 0));
-  setText('dca-t-fee', fmtNum(P ? P.dcaMonthlyFeeTwd : 0, 1));
-  setText('dca-t-net', fmtNum(P ? P.dcaMonthlyNetTwd : 0));
+  setPlainText('dca-t-gross', fmtNum(P ? P.dcaMonthlyGrossTwd : 0));
+  setPlainText('dca-t-fee', fmtNum(P ? P.dcaMonthlyFeeTwd : 0, 1));
+  setPlainText('dca-t-net', fmtNum(P ? P.dcaMonthlyNetTwd : 0));
   $all('details.amort[open]').forEach(renderAmort);
   const sum = M.allocTargetSum, okSum = Math.abs(sum - 100) <= 0.01;
   const el = $('#allocSum');
@@ -1817,7 +2462,7 @@ function renderAmort(det) {
   const l = S.loans[i];
   const body = det.querySelector('.amort-body');
   if (!l || !body) return;
-  const n = Math.round(num(l.term));
+  const n = clamp(Math.round(num(l.term)), 0, MAX_LOAN_TERM);
   if (n <= 0) { body.innerHTML = '<div class="empty">只付息，無攤還表</div>'; return; }
   const rows = amortSchedule(l.principal, l.rate, n);
   if (!rows.length) { body.innerHTML = '<div class="empty">尚無資料</div>'; return; }
@@ -1830,10 +2475,11 @@ function renderAmort(det) {
 }
 function renderAdvice() {
   const list = buildAdvice(M, S.targets);
-  $('#advice').innerHTML = list.length ? list.map(function (a) {
-    return '<div class="advice-item s-' + a.status + '"><div class="advice-head"><span class="badge s-' + a.status + '">' + STATUS_LABEL[a.status] +
+  setHtmlNode($('#advice'), list.length ? list.map(function (a) {
+    const st = hasOwn(STATUS_LABEL, a.status) ? a.status : 'na';
+    return '<div class="advice-item s-' + st + '"><div class="advice-head"><span class="badge s-' + st + '">' + STATUS_LABEL[st] +
       '</span><strong>' + esc(a.title) + '</strong></div><p>' + esc(a.text) + '</p></div>';
-  }).join('') : '<div class="empty">尚無資料</div>';
+  }).join('') : '<div class="empty">尚無資料</div>');
 }
 const CLASS_COLORS = { tw: 'var(--c1)', us: 'var(--c2)', cash: 'var(--c3)' };
 function stackSvg(parts) {
@@ -1857,7 +2503,7 @@ function renderAlloc() {
         '</td><td class="r">' + fmtPct(c.actual, 1) + '</td><td class="r">' + fmtPct(c.target, 1) + '</td><td class="r">' + fmtSignedPct(c.dev, 1) +
         '</td><td class="r">' + fmtSigned(c.rebalance) + '</td></tr>';
     }).join('') + '</tbody></table></div>';
-  $('#alloc').innerHTML = h;
+  setHtmlNode($('#alloc'), h);
 }
 function computeProjection() {
   return project({
@@ -1872,13 +2518,13 @@ function renderProjection() {
   const curTax = snapTaxRate(S.projection.taxRate);
   const sumEl = $('#projSummary');
   if (sumEl) {
-    sumEl.innerHTML = '起始台股市值 <b>' + fmtNum(M.twMV) + '</b> 元（成本 <b>' + fmtNum(M.twCost) + '</b> 元）｜起始美股市值 <b>' +
+    setHtmlNode(sumEl, '起始台股市值 <b>' + fmtNum(M.twMV) + '</b> 元（成本 <b>' + fmtNum(M.twCost) + '</b> 元）｜起始美股市值 <b>' +
       fmtNum(M.usMV) + '</b> 元（成本 <b>' + fmtNum(M.usCost) + '</b> 元）｜起始現金 <b>' + fmtNum(M.cash) + '</b> 元｜起始總資產 <b>' +
-      fmtNum(M.totalAssets) + '</b> 元｜起始淨值 <b>' + fmtNum(M.netWorth) + '</b> 元（未實現損益 <b>' + fmtSigned(M.totalPL) + '</b> 元）';
+      fmtNum(M.totalAssets) + '</b> 元｜起始淨值 <b>' + fmtNum(M.netWorth) + '</b> 元（未實現損益 <b>' + fmtSigned(M.totalPL) + '</b> 元）');
   }
-  $('#projRate').innerHTML = '現有部位加權名目年化 <b>' + fmtPct(M.weightedIrr) + '</b>，實質 <b>' + fmtPct(realRate(M.weightedIrr, infl)) +
+  setHtmlNode($('#projRate'), '現有部位加權名目年化 <b>' + fmtPct(M.weightedIrr) + '</b>，實質 <b>' + fmtPct(realRate(M.weightedIrr, infl)) +
     '</b>（通膨 ' + fmtPct(infl, 1) + '）｜綜所稅率級距 <b>' + curTax + '%</b>｜每月定期定額總扣款 <b>' + fmtNum(P.dcaMonthlyGrossTwd) + '</b> 元（富邦手續費 <b>' +
-    fmtNum(P.dcaMonthlyFeeTwd, 1) + '</b> 元，淨投入 <b>' + fmtNum(P.dcaMonthlyNetTwd) + '</b> 元）';
+    fmtNum(P.dcaMonthlyFeeTwd, 1) + '</b> 元，淨投入 <b>' + fmtNum(P.dcaMonthlyNetTwd) + '</b> 元）');
   const marks = [5, 10, 15, 20, 25, 30];
   let h = '<thead><tr><th>年度</th><th class="r">資產</th><th class="r">負債</th><th class="r">淨值</th>' +
     '<th class="r">當年度 54C 股利</th><th class="r">當年度股利綜所稅 (' + curTax + '%)</th><th class="r">當年度 54C 抵減 (8.5%)</th><th class="r">當年度二代健保 (2.11%)</th><th class="r">累計手續費</th></tr></thead><tbody>';
@@ -1892,7 +2538,7 @@ function renderProjection() {
       fmtNum(r.annual54c) + '</td><td class="r">' + (r.annualIncomeTax > 0 ? '-' + fmtNum(r.annualIncomeTax) : '0') + '</td><td class="r">' +
       (r.annual54cCredit > 0 ? '+' + fmtNum(r.annual54cCredit) : '0') + '</td><td class="r">' + (r.annualNhi > 0 ? '-' + fmtNum(r.annualNhi) : '0') + '</td><td class="r">' + fmtNum(r.cumFee) + '</td></tr>';
   });
-  $('#projTable').innerHTML = h + '</tbody>';
+  setHtmlNode($('#projTable'), h + '</tbody>');
 }
 function renderHistoryTable() {
   const rows = S.snapshots.slice().reverse();
@@ -1903,21 +2549,32 @@ function renderHistoryTable() {
       '</td><td><button class="btn small danger" data-act="del-snap" data-date="' + esc(s.date) + '">刪除</button></td></tr>';
   });
   if (!rows.length) h += '<tr><td colspan="8" class="empty">尚無快照</td></tr>';
-  $('#histTable').innerHTML = h + '</tbody>';
+  setHtmlNode($('#histTable'), h + '</tbody>');
 }
 
 /* ==== [MODULE: CHART] ==== */
 function niceTicks(min, max, count) {
+  if (!isFinite(min) || !isFinite(max)) return [0, 1];
   const span = max - min;
-  if (!(span > 0)) return [min, min + 1];
+  if (!(span > 0) || !isFinite(span)) {
+    const base = Math.abs(min) < MAX_ABS_VAL ? min : 0;
+    return [base, base + 1];
+  }
   const raw = span / Math.max(1, count);
   const mag = Math.pow(10, Math.floor(Math.log10(raw)));
   const nrm = raw / mag;
   const step = (nrm <= 1 ? 1 : nrm <= 2 ? 2 : nrm <= 2.5 ? 2.5 : nrm <= 5 ? 5 : 10) * mag;
-  const lo = Math.floor(min / step) * step, hi = Math.ceil(max / step) * step;
+  if (!(step > 0) || !isFinite(step)) return [min, max];
+  const loIdx = Math.floor(min / step), hiIdx = Math.ceil(max / step);
+  const steps = hiIdx - loIdx;
+  if (!isFinite(steps) || steps <= 0 || steps > 64) return [min, max];
   const out = [];
-  for (let v = lo; v <= hi + step * 1e-6; v += step) out.push(Math.abs(v) < step * 1e-6 ? 0 : v);
-  return out;
+  for (let i = 0; i <= steps; i++) {
+    const v = (loIdx + i) * step;
+    if (!isFinite(v)) break;
+    out.push(Math.abs(v) < step * 1e-6 ? 0 : v);
+  }
+  return out.length >= 2 ? out : [min, max];
 }
 /* cfg: {id, xs, series:[{key,name,color,values,width}], xTicks, xLabel, tipTitle, markers:[{x,key}], emptyText} */
 function lineChart(el, cfg) {
@@ -1933,13 +2590,20 @@ function lineChart(el, cfg) {
   if (ymax === ymin) ymax = ymin + 1;
   const ticks = niceTicks(ymin, ymax, 4);
   const y0 = ticks[0], y1 = ticks[ticks.length - 1];
+  const yrSpan = (y1 - y0) || 1;
   const labels = ticks.map(fmtCompact);
   const padL = Math.max.apply(null, labels.map(function (l) { return l.length; })) * 7 + 12;
   const hasSub = typeof cfg.xSubLabel === 'function';
   const padR = 16, padT = 18, padB = hasSub ? 38 : 24;
   const xmin = xs[0], xmax = xs[xs.length - 1], xr = (xmax - xmin) || 1;
-  const X = function (x) { return xs.length === 1 ? padL + (W - padL - padR) / 2 : padL + (x - xmin) / xr * (W - padL - padR); };
-  const Y = function (v) { return padT + (1 - (v - y0) / (y1 - y0)) * (H - padT - padB); };
+  const X = function (x) {
+    const px = xs.length === 1 ? padL + (W - padL - padR) / 2 : padL + (x - xmin) / xr * (W - padL - padR);
+    return isFinite(px) ? px : padL;
+  };
+  const Y = function (v) {
+    const py = padT + (1 - (isFinite(v) ? (v - y0) / yrSpan : 0)) * (H - padT - padB);
+    return isFinite(py) ? py : (H - padB);
+  };
   let svg = '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H + '" role="img">';
   ticks.forEach(function (tv, i) {
     const y = Y(tv).toFixed(1);
@@ -2052,17 +2716,24 @@ function renderHistChart() {
     tipTitle: function (x) { return toDateStr(x); }
   });
 }
-function renderCharts() {
+function renderCharts(includeHist) {
   if (!M) return;
-  renderProjChart();
-  renderHistChart();
+  if (!collapsedPanels['sec-projection']) renderProjChart();
+  if (includeHist !== false && !collapsedPanels['sec-history']) renderHistChart();
 }
 
 /* ==== [MODULE: UPDATE] ==== */
-function scheduleUpdate() {
-  update();
-}
-function update() {
+let stateDirty = false;
+let hashDirty = false;
+let userModified = false;
+let saveTimer = null;
+let hashRetryTimer = null;
+let rafId = null;
+let renderDeferred = false;
+
+function recalcAndRender() {
+  rafId = null;
+  renderDeferred = false;
   M = computeAll(S, todayStr());
   P = computeProjection();
   renderMetrics();
@@ -2070,12 +2741,73 @@ function update() {
   renderAdvice();
   renderAlloc();
   renderProjection();
-  renderHistoryTable();
-  renderCharts();
-  Store.save(S);
+  const doSnaps = snapsDirty;
+  snapsDirty = false;
+  if (doSnaps) renderHistoryTable();
+  renderCharts(doSnaps);
 }
-function renderAll() { renderInputs(); update(); }
+function commitSave() {
+  if (saveTimer !== null) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  if ((!stateDirty && !hashDirty) || !S) return;
+  const needFullSave = stateDirty;
+  stateDirty = false;
+  const res = needFullSave ? Store.save(S) : { hashOk: Store.writeHash(S) };
+  if (res && res.hashOk) {
+    hashDirty = false;
+    if (hashRetryTimer !== null) { clearTimeout(hashRetryTimer); hashRetryTimer = null; }
+  } else if (typeof window !== 'undefined' && typeof history !== 'undefined' && history && typeof history.replaceState === 'function') {
+    hashDirty = true;
+    if (hashRetryTimer === null) {
+      hashRetryTimer = setTimeout(function () {
+        hashRetryTimer = null;
+        if (hashDirty && S && Store.writeHash(S)) hashDirty = false;
+      }, 2000);
+    }
+  } else {
+    hashDirty = false;
+  }
+}
+function scheduleSave() {
+  if (saveTimer !== null) clearTimeout(saveTimer);
+  saveTimer = setTimeout(commitSave, 1000);
+}
+function scheduleRender() {
+  if (rafId !== null) return;
+  if (typeof requestAnimationFrame === 'function') {
+    rafId = requestAnimationFrame(recalcAndRender);
+  } else {
+    recalcAndRender();
+  }
+}
+function markDirty(immediateSave) {
+  if (!S) return;
+  userModified = true;
+  if (!S.cid) S.cid = genCid();
+  S.updatedAt = Date.now();
+  stateDirty = true;
+  hashDirty = true;
+  if (immediateSave) {
+    if (rafId !== null && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+    recalcAndRender();
+    commitSave();
+  } else {
+    scheduleRender();
+    scheduleSave();
+  }
+}
+function renderAll() {
+  snapsDirty = true;
+  renderInputs();
+  recalcAndRender();
+}
 function togglePanel(panelId, forceExpand) {
+  if (typeof panelId !== 'string' || !/^sec-[a-z-]+$/.test(panelId) || !isSafeKey(panelId)) return;
   const sec = document.getElementById(panelId);
   const body = document.getElementById('body-' + panelId);
   const btn = document.querySelector('[data-act="toggle-panel"][data-panel="' + panelId + '"]');
@@ -2092,27 +2824,72 @@ function togglePanel(panelId, forceExpand) {
 /* ==== [MODULE: IO] ==== */
 function exportJson() {
   const blob = new Blob([JSON.stringify(S, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
+  a.href = url;
   a.download = 'finTracker-' + todayStr() + '.json';
   document.body.appendChild(a);
   a.click();
-  setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 1000);
 }
 function importJsonFile(file) {
+  if (!file) return;
+  if (typeof file.size === 'number' && file.size > MAX_IMPORT_BYTES) {
+    toast('匯入失敗：檔案超過 2 MB 上限');
+    return;
+  }
   const reader = new FileReader();
   reader.onload = function () {
     try {
-      const raw = JSON.parse(String(reader.result));
+      const text = String(reader.result || '');
+      if (text.length > MAX_IMPORT_BYTES) throw new Error('size');
+      const raw = JSON.parse(text);
       if (!isObj(raw)) throw new Error('bad');
       S = normalizeState(raw);
-      renderAll();
+      S.cid = genCid();
+      snapsDirty = true;
+      renderInputs();
+      markDirty(true);
       toast('已匯入資料');
     } catch (e) {
       toast('匯入失敗：檔案格式不正確');
     }
   };
   reader.readAsText(file);
+}
+function copyCleanUrl() {
+  let clean = '';
+  try {
+    clean = (typeof window !== 'undefined' && window.location && typeof window.location.href === 'string')
+      ? window.location.href.split('#')[0]
+      : '';
+  } catch (e) {}
+  if (!clean) { toast('無法取得網址'); return; }
+  const fallbackCopy = function () {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = clean;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand && document.execCommand('copy');
+      ta.remove();
+      toast(ok ? '已複製乾淨分享網址（不含個人資料）' : clean);
+    } catch (e) {
+      toast(clean);
+    }
+  };
+  if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    try {
+      navigator.clipboard.writeText(clean).then(function () {
+        toast('已複製乾淨分享網址（不含個人資料）');
+      }, fallbackCopy);
+      return;
+    } catch (e) {}
+  }
+  fallbackCopy();
 }
 
 /* ==== [MODULE: EVENTS] ==== */
@@ -2122,22 +2899,42 @@ const ROW_TEMPLATES = {
   loans: loanTemplate
 };
 const ROW_RENDER = { tw: function () { renderHoldings('tw'); }, us: function () { renderHoldings('us'); }, loans: renderLoans };
-function onFieldInput(el) {
+const SAFE_PATH_RE = /^[a-zA-Z0-9_.]+$/;
+
+function onFieldInput(el, isFlush) {
+  if (!el || el.isConnected === false) return;
   const path = el.getAttribute('data-path');
+  if (typeof path !== 'string' || !SAFE_PATH_RE.test(path)) return;
   const kind = el.getAttribute('data-kind');
   let v;
   if (kind === 'num') v = num(el.value);
   else if (kind === 'bool') v = !!el.checked;
-  else v = el.value;
-  setPath(S, path, v);
+  else v = truncStr(el.value, MAX_STR_LEN);
+
   if (path === 'cash.investYears') {
+    v = clamp(v, 0, 150);
+    const curEff = Math.round(effectiveInvestYears(S.cash, todayStr()) * 100) / 100;
+    if ((isFlush && v === curEff) || (v === curEff && v === num(S.cash.investYears))) return;
+    if (!setPath(S, path, v)) return;
     S.cash.investYearsAsOf = todayStr();
+  } else {
+    const loanPaidMatch = /^loans\.(\d+)\.paid$/.exec(path);
+    if (loanPaidMatch) {
+      v = clamp(Math.round(v), 0, MAX_LOAN_TERM * 2);
+      const lIdx = +loanPaidMatch[1];
+      if (!S.loans[lIdx]) return;
+      const curPaid = loanPaidCount(S.loans[lIdx], todayStr());
+      if ((isFlush && v === curPaid) || (v === curPaid && v === num(S.loans[lIdx].paid))) return;
+      if (!setPath(S, path, v)) return;
+      S.loans[lIdx].paidAsOf = todayStr();
+    } else {
+      if (kind === 'num') v = clamp(v, -MAX_ABS_VAL, MAX_ABS_VAL);
+      const prev = getPath(S, path);
+      if (prev === v) return;
+      if (!setPath(S, path, v)) return;
+    }
   }
-  const loanPaidMatch = /^loans\.(\d+)\.paid$/.exec(path);
-  if (loanPaidMatch) {
-    const lIdx = +loanPaidMatch[1];
-    if (S.loans[lIdx]) S.loans[lIdx].paidAsOf = todayStr();
-  }
+
   const mktMatch = /^projection\.dcaPlans\.(\d+)\.market$/.exec(path);
   if (mktMatch) {
     const idx = +mktMatch[1];
@@ -2157,10 +2954,12 @@ function onFieldInput(el) {
       renderDcaPlans();
     }
   }
-  $all('[data-path="' + path + '"]').forEach(function (o) {
-    if (o !== el && kind === 'num') o.value = fmtInput(v);
-  });
-  scheduleUpdate();
+  if (path === 'fx.usdTwd') {
+    $all('[data-path="fx.usdTwd"]').forEach(function (o) {
+      if (o !== el) o.value = fmtInput(v);
+    });
+  }
+  markDirty(false);
 }
 function syncTaxSliderUI(rate) {
   const curTax = snapTaxRate(rate);
@@ -2174,34 +2973,89 @@ function syncTaxSliderUI(rate) {
     if (btn.classList && btn.classList.toggle) btn.classList.toggle('on', on);
   });
 }
+function flushPendingSave() {
+  const active = document.activeElement;
+  if (active && active.isConnected !== false && active.hasAttribute && active.hasAttribute('data-path')) {
+    onFieldInput(active, true);
+  }
+  if (document.visibilityState === 'hidden' && rafId !== null && typeof cancelAnimationFrame === 'function') {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+    renderDeferred = true;
+  }
+  commitSave();
+}
+function syncFromStorageIfNewer() {
+  if (stateDirty) return;
+  if (S && Store.peekExternalChange(S.updatedAt)) {
+    const loaded = Store.loadSync();
+    if (loaded.hasStored && S && num(loaded.state.updatedAt) > num(S.updatedAt)) {
+      S = loaded.state;
+      renderAll();
+      return;
+    }
+  }
+  const nowDay = todayStr();
+  if (M && M.today !== nowDay) {
+    $('#footer').textContent = '財務追蹤器 ' + APP_VERSION + ' ｜ 基準日：' + nowDay;
+    recalcAndRender();
+    return;
+  }
+  if (renderDeferred && S) recalcAndRender();
+}
 function bindEvents() {
   const onAnyInput = function (e) {
     const el = e.target;
-    if (!el) return;
+    if (!el || el.isConnected === false) return;
     if (el.id === 'taxRateSlider') {
       const idx = clamp(Math.round(num(el.value)), 0, TW_TAX_BRACKETS.length - 1);
-      S.projection.taxRate = TW_TAX_BRACKETS[idx];
-      syncTaxSliderUI(S.projection.taxRate);
-      scheduleUpdate();
+      const nextRate = TW_TAX_BRACKETS[idx];
+      if (S.projection.taxRate === nextRate) return;
+      S.projection.taxRate = nextRate;
+      syncTaxSliderUI(nextRate);
+      markDirty(false);
       return;
     }
-    if (el.hasAttribute && el.hasAttribute('data-path')) onFieldInput(el);
+    if (el.hasAttribute && el.hasAttribute('data-path')) onFieldInput(el, false);
   };
   document.addEventListener('input', onAnyInput);
   document.addEventListener('change', onAnyInput);
   document.addEventListener('compositionend', onAnyInput);
   document.addEventListener('focusout', function (e) {
     const el = e.target;
-    if (el && el.hasAttribute && el.hasAttribute('data-path')) onFieldInput(el);
-    if (el && el.getAttribute && el.getAttribute('data-kind') === 'num') el.value = fmtInput(num(el.value));
+    if (!el || el.isConnected === false) return;
+    if (el.hasAttribute && el.hasAttribute('data-path')) onFieldInput(el, true);
+    if (el.getAttribute && el.getAttribute('data-kind') === 'num') el.value = fmtInput(num(el.value));
+    commitSave();
   });
-  const flushAndSave = function () {
-    const active = document.activeElement;
-    if (active && active.hasAttribute && active.hasAttribute('data-path')) onFieldInput(active);
-    if (S) Store.save(S);
-  };
-  window.addEventListener('pagehide', flushAndSave);
-  window.addEventListener('beforeunload', flushAndSave);
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') flushPendingSave();
+    else if (document.visibilityState === 'visible') syncFromStorageIfNewer();
+  });
+  window.addEventListener('pagehide', flushPendingSave);
+  window.addEventListener('beforeunload', flushPendingSave);
+  window.addEventListener('blur', flushPendingSave);
+  window.addEventListener('focus', function () {
+    if (renderDeferred && S) recalcAndRender();
+  });
+  window.addEventListener('pageshow', function (e) {
+    if (e && e.persisted) syncFromStorageIfNewer();
+  });
+  window.addEventListener('storage', function (e) {
+    if (!e || !e.key || e.key === STORAGE_KEY) {
+      storageChangedFlag = true;
+      if (document.visibilityState === 'visible') syncFromStorageIfNewer();
+    }
+  });
+  window.addEventListener('hashchange', function () {
+    const h = (typeof window !== 'undefined' && window.location && typeof window.location.hash === 'string') ? window.location.hash : '';
+    if (!h || h === lastWrittenHash || h.indexOf('#s=') !== 0) return;
+    const loaded = Store.loadSync();
+    if (loaded.hasStored) {
+      S = loaded.state;
+      renderAll();
+    }
+  });
   document.addEventListener('toggle', function (e) {
     const el = e.target;
     if (el && el.classList && el.classList.contains('amort') && el.open && M) renderAmort(el);
@@ -2209,8 +3063,11 @@ function bindEvents() {
   document.addEventListener('click', function (e) {
     const navLink = e.target.closest ? e.target.closest('.nav a[href^="#sec-"]') : null;
     if (navLink) {
+      if (e.preventDefault) e.preventDefault();
       const targetId = navLink.getAttribute('href').slice(1);
       if (collapsedPanels[targetId]) togglePanel(targetId, true);
+      const secEl = document.getElementById(targetId);
+      if (secEl && secEl.scrollIntoView) secEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
     const btn = e.target.closest ? e.target.closest('[data-act]') : null;
@@ -2220,65 +3077,97 @@ function bindEvents() {
     if (act === 'toggle-panel') {
       togglePanel(btn.getAttribute('data-panel'));
     } else if (act === 'add-row' && (list === 'dcaTw' || list === 'dcaUs')) {
+      if (S.projection.dcaPlans.length >= MAX_LIST_ROWS) { toast('已達列數上限'); return; }
       const row = dcaTemplate(list === 'dcaUs' ? 'US' : 'TW');
       row.monthlyAmount = list === 'dcaUs' ? 300 : 10000;
       S.projection.dcaPlans.push(row);
       renderDcaPlans();
-      update();
+      markDirty(true);
     } else if (act === 'del-row' && list === 'dcaPlans') {
       const i = +btn.getAttribute('data-i');
       if (S.projection.dcaPlans[i] && !S.projection.dcaPlans[i].pinned) {
         S.projection.dcaPlans.splice(i, 1);
         renderDcaPlans();
-        update();
+        markDirty(true);
       }
-    } else if (act === 'add-row' && ROW_TEMPLATES[list]) {
+    } else if (act === 'add-row' && hasOwn(ROW_TEMPLATES, list)) {
+      if (S[list].length >= MAX_LIST_ROWS) { toast('已達列數上限'); return; }
       const row = ROW_TEMPLATES[list]();
       if (list === 'loans') row.name = '負債 ' + (S.loans.length + 1);
       S[list].push(row);
       ROW_RENDER[list]();
-      update();
-    } else if (act === 'del-row' && ROW_TEMPLATES[list]) {
+      markDirty(true);
+    } else if (act === 'del-row' && hasOwn(ROW_TEMPLATES, list)) {
       const i = +btn.getAttribute('data-i');
-      S[list].splice(i, 1);
-      ROW_RENDER[list]();
-      update();
+      if (i >= 0 && i < S[list].length) {
+        S[list].splice(i, 1);
+        ROW_RENDER[list]();
+        markDirty(true);
+      }
     } else if (act === 'del-snap') {
       const d = btn.getAttribute('data-date');
       S.snapshots = S.snapshots.filter(function (s) { return s.date !== d; });
-      update();
+      snapsDirty = true;
+      markDirty(true);
     } else if (act === 'snapshot') {
       const snap = makeSnapshot(M, todayStr());
       S.snapshots = upsertSnapshot(S.snapshots, snap);
-      update();
+      snapsDirty = true;
+      markDirty(true);
       toast('已記錄 ' + snap.date + ' 快照');
     } else if (act === 'theme') {
       Theme.toggle();
     } else if (act === 'proj-mode') {
-      S.projection.real = btn.getAttribute('data-real') === '1';
-      renderProjControls();
-      update();
+      const nextReal = btn.getAttribute('data-real') === '1';
+      if (S.projection.real !== nextReal) {
+        S.projection.real = nextReal;
+        renderProjControls();
+        markDirty(true);
+      }
     } else if (act === 'tax-bracket') {
-      S.projection.taxRate = snapTaxRate(btn.getAttribute('data-rate'));
-      syncTaxSliderUI(S.projection.taxRate);
-      update();
+      const nextTax = snapTaxRate(btn.getAttribute('data-rate'));
+      if (S.projection.taxRate !== nextTax) {
+        S.projection.taxRate = nextTax;
+        syncTaxSliderUI(nextTax);
+        markDirty(true);
+      }
     } else if (act === 'legend') {
       const c = btn.getAttribute('data-chart'), k = btn.getAttribute('data-key');
-      chartHidden[c][k] = !chartHidden[c][k];
-      renderCharts();
+      if (hasOwn(chartHidden, c) && isSafeKey(k)) {
+        chartHidden[c][k] = !chartHidden[c][k];
+        renderCharts();
+      }
     } else if (act === 'export') {
       exportJson();
     } else if (act === 'import') {
       $('#importFile').click();
+    } else if (act === 'copy-url') {
+      copyCleanUrl();
     } else if (act === 'reset') {
-      if (confirm('確定要重設為範例資料？目前資料將被取代。')) { S = defaultState(); renderAll(); toast('已重設為範例資料'); }
+      if (confirm('確定要重設為範例資料？目前資料將被取代。')) {
+        S = defaultState();
+        S.cid = genCid();
+        snapsDirty = true;
+        renderInputs();
+        markDirty(true);
+        toast('已重設為範例資料');
+      }
     } else if (act === 'clear') {
-      if (confirm('確定要清空所有持股、負債與快照？目標設定將保留。')) {
+      if (confirm('確定要清空所有持股、負債、定期定額與快照？匯率與目標設定將保留。')) {
         const e2 = emptyState();
-        e2.targets = S.targets; e2.fx = S.fx; e2.projection = S.projection;
+        e2.targets = S.targets; e2.fx = S.fx;
         S = normalizeState(e2);
+        S.cid = genCid();
+        S.updatedAt = Date.now();
+        userModified = true;
+        stateDirty = false;
+        hashDirty = false;
+        if (saveTimer !== null) { clearTimeout(saveTimer); saveTimer = null; }
+        if (hashRetryTimer !== null) { clearTimeout(hashRetryTimer); hashRetryTimer = null; }
+        snapsDirty = true;
         renderAll();
-        toast('已清空資料');
+        Store.clearAll(S);
+        toast('已清空資料並移除網址個人狀態');
       }
     }
   });
@@ -2292,12 +3181,35 @@ function bindEvents() {
 
 /* ==== [MODULE: INIT] ==== */
 (function init() {
-  S = Store.load();
+  let initialSec = '';
+  try {
+    const h0 = (typeof window !== 'undefined' && window.location && typeof window.location.hash === 'string') ? window.location.hash : '';
+    if (/^#sec-[a-z-]+$/.test(h0)) initialSec = h0.slice(1);
+  } catch (e) {}
+  const boot = Store.loadSync();
+  S = boot.state;
   Theme.init();
   buildMetricCards();
   bindEvents();
   renderAll();
   $('#footer').textContent = '財務追蹤器 ' + APP_VERSION + ' ｜ 基準日：' + todayStr();
+  if (initialSec) {
+    const secEl = document.getElementById(initialSec);
+    if (secEl && secEl.scrollIntoView) secEl.scrollIntoView();
+  }
+  if (boot.source !== 'ls') {
+    Store.recoverFromIdb(function (idbState) {
+      if (stateDirty || userModified) return;
+      const uIdb = num(idbState.updatedAt), uCur = num(S.updatedAt);
+      const moreSnaps = uIdb === uCur && (idbState.snapshots || []).length > (S.snapshots || []).length;
+      if (!boot.hasStored || uIdb > uCur || moreSnaps) {
+        S = idbState;
+        Store.writeHash(S);
+        try { if (lsStatus >= 0) localStorage.setItem(STORAGE_KEY, JSON.stringify(S)); } catch (e) {}
+        renderAll();
+      }
+    });
+  }
 })();
 </script>
 </body>
